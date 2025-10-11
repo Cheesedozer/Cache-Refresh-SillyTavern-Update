@@ -28,9 +28,9 @@
                 <span data-i18n="Show Status Indicator">Show Status Indicator</span>
             </div>
             
-            <div class="flex-container" title="Disable max tokens feature if your provider has issues with this">
+            <div class="flex-container" title="Disable max tokens feature if your provider has issues with this. Will waste all your money on a responce. (responce can be seen in the cmd)">
                 <input type="checkbox" id="cache_refresher_disable_max_tokens">
-                <span data-i18n="Disable Max Tokens Feature">Disable Max Tokens Feature</span>
+                <span data-i18n="Disable Max Tokens Feature (Not recommended)">Disable Max Tokens Feature (Not recommended)</span>
             </div>
 
             <hr>
@@ -41,14 +41,14 @@
                     Maximum Refreshes
                 </label>
                 <div class="flex-container">
-                    <input id="cache_refresher_max_refreshes" class="text_pole flex1 wide100p" type="number" min="1" max="20" value="3">
+                    <input id="cache_refresher_max_refreshes" class="text_pole flex1 wide100p" type="number" min="1" max="1000" value="3">
                 </div>
                 
                 <!-- Refresh interval setting -->
                 <div class="cache-refresher-setting-item">
                     <label for="cache_refresher_interval" title="Interval between cache refreshes in minutes">
                         <span>Refresh Interval (minutes)</span>
-                        <input type="number" id="cache_refresher_interval" name="cache_refresher_interval" min="0.5" max="10" step="0.1" class="text_pole textarea_compact">
+                        <input type="number" id="cache_refresher_interval" name="cache_refresher_interval" min="0.1" max="1000" step="0.1" class="text_pole textarea_compact">
                     </label>
                 </div>
                 
