@@ -341,7 +341,7 @@ async function bindSettingsHandlers() {
         });
 
         // Min tokens input - controls how many tokens to request in each refresh
-        $('#cache_refresher_min_tokens').off('change input').on('change input', async function() {
+        $('#cache_refresher_max_tokens').off('change input').on('change input', async function() {
             settings.maxTokens = parseInt($(this).val()) || defaultSettings.maxTokens;
             await saveSettings();
         });
@@ -482,9 +482,9 @@ async function refreshCache() {
         }
 
         // Temporarily set max tokens to 1 to minimize token usage
-        TempResponseLength.save(mainApi, 1);
+        TempResponseLength.save(mainApi, settings.maxTokens);
         eventHook = TempResponseLength.setupEventHook(mainApi);
-        debugLog('Temporarily set response length to 1 token');
+        debugLog(`Temporarily set response length to ${settings.maxTokens} token`);
         
         // Send a "quiet" request - this tells SillyTavern not to display the response
         // We're just refreshing the cache, not generating visible content
