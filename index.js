@@ -114,7 +114,7 @@ const defaultSettings = {
     maxTokens: 1,                          // Maximum tokens to request for cache refresh (keeping it minimal to reduce costs)
     showNotifications: true,               // Whether to display toast notifications for each refresh
     showStatusIndicator: true,             // Whether to display the floating status indicator
-    useMaxTokens: true,                    // Whether to use the max tokens feature (disable for problematic providers)
+    disableMaxTokens: false,               // Whether to disable the max tokens feature (enable for problematic providers)
 };
 
 // Initialize extension settings
@@ -258,16 +258,16 @@ async function updateSettingsPanel() {
         $('#cache_refresher_enabled').prop('checked', settings.enabled);
         $('#cache_refresher_show_notifications').prop('checked', settings.showNotifications);
         $('#cache_refresher_show_status_indicator').prop('checked', settings.showStatusIndicator);
-        $('#cache_refresher_use_max_tokens').prop('checked', settings.useMaxTokens);
+        $('#cache_refresher_disable_max_tokens').prop('checked', settings.disableMaxTokens);
 
         // Update number inputs with current values
         // Convert milliseconds to minutes for the interval display
         $('#cache_refresher_max_refreshes').val(settings.maxRefreshes);
         $('#cache_refresher_interval').val(settings.refreshInterval / (60 * 1000));
-        $('#cache_refresher_min_tokens').val(settings.maxTokens);
+        $('#cache_refresher_max_tokens').val(settings.maxTokens);
 
-        // Enable/disable the max tokens input based on the useMaxTokens setting
-        $('#cache_refresher_max_tokens').prop('disabled', !settings.useMaxTokens);
+        // Enable/disable the max tokens input based on the disableMaxTokens setting
+        $('#cache_refresher_max_tokens').prop('disabled', settings.disableMaxTokens);
 
         // Update the status text to show current state
         const statusText = $('#cache_refresher_status_text');
@@ -320,9 +320,22 @@ async function bindSettingsHandlers() {
             updateSettingsPanel();
         });
 
-        // Use max tokens toggle - controls whether to use the max tokens feature
-        $('#cache_refresher_use_max_tokens').off('change').on('change', async function() {
-            settings.useMaxTokens = $(this).prop('checked');
+        // Show notifications toggle - controls whether to show toast notifications
+        $('#cache_refresher_show_notifications').off('change').on('change', async function() {
+            settings.showNotifications = $(this).prop('checked');
+            await saveSettings();
+        });
+        
+        // Show status indicator toggle - controls whether to show the floating status indicator
+        $('#cache_refresher_show_status_indicator').off('change').on('change', async function() {
+            settings.showStatusIndicator = $(this).prop('checked');
+            await saveSettings();
+            updateUI(); // Update UI immediately to show/hide the indicator
+        });
+
+        // Disable max tokens toggle - controls whether to disable the max tokens feature
+        $('#cache_refresher_disable_max_tokens').off('change').on('change', async function() {
+            settings.disableMaxTokens = $(this).prop('checked');
             await saveSettings();
             updateSettingsPanel(); // Update UI to enable/disable the max tokens input
         });
@@ -352,23 +365,10 @@ async function bindSettingsHandlers() {
             }
         });
 
-        // Min tokens input - controls how many tokens to request in each refresh
+        // Max tokens input - controls how many tokens to request in each refresh
         $('#cache_refresher_max_tokens').off('change input').on('change input', async function() {
             settings.maxTokens = parseInt($(this).val()) || defaultSettings.maxTokens;
             await saveSettings();
-        });
-
-        // Show notifications toggle - controls whether to show toast notifications
-        $('#cache_refresher_show_notifications').off('change').on('change', async function() {
-            settings.showNotifications = $(this).prop('checked');
-            await saveSettings();
-        });
-        
-        // Show status indicator toggle - controls whether to show the floating status indicator
-        $('#cache_refresher_show_status_indicator').off('change').on('change', async function() {
-            settings.showStatusIndicator = $(this).prop('checked');
-            await saveSettings();
-            updateUI(); // Update UI immediately to show/hide the indicator
         });
 
         debugLog('Settings handlers bound successfully');
@@ -493,8 +493,8 @@ async function refreshCache() {
             throw new Error(`Unsupported API for cache refresh: ${mainApi} in refreshCache()`);
         }
 
-        // Only use max tokens feature if enabled in settings
-        if (settings.useMaxTokens) {
+        // Only use max tokens feature if not disabled in settings
+        if (!settings.disableMaxTokens) {
             // Temporarily set max tokens to the configured value to minimize token usage
             TempResponseLength.save(mainApi, settings.maxTokens);
             eventHook = TempResponseLength.setupEventHook(mainApi);
@@ -516,7 +516,7 @@ async function refreshCache() {
         showNotification(`Cache refresh failed: ${error.message}`, 'error');
     } finally {
         // Always restore the original max tokens value if it was customized
-        if (settings.useMaxTokens && TempResponseLength.isCustomized()) {
+        if (!settings.disableMaxTokens && TempResponseLength.isCustomized()) {
             TempResponseLength.restore(mainApi);
             TempResponseLength.removeEventHook(mainApi, eventHook);
             debugLog('Restored original response length');

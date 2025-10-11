@@ -18,11 +18,6 @@
                 <span data-i18n="Enable Cache Refresher">Enable Cache Refresher</span>
             </div>
             
-            <div class="flex-container" title="Disable max tokens feature to limit response length (If your provider has issues with this)">
-                <input type="checkbox" id="cache_refresher_use_max_tokens" checked>
-                <span data-i18n="Disable Max Tokens Feature">Disable Max Tokens Feature</span>
-            </div>
-            
             <div class="flex-container" title="Show notifications when cache is refreshed">
                 <input type="checkbox" id="cache_refresher_show_notifications" checked>
                 <span data-i18n="Show Notifications">Show Notifications</span>
@@ -31,6 +26,11 @@
             <div class="flex-container" title="Show floating status indicator with refresh countdown">
                 <input type="checkbox" id="cache_refresher_show_status_indicator" checked>
                 <span data-i18n="Show Status Indicator">Show Status Indicator</span>
+            </div>
+            
+            <div class="flex-container" title="Disable max tokens feature if your provider has issues with this">
+                <input type="checkbox" id="cache_refresher_disable_max_tokens">
+                <span data-i18n="Disable Max Tokens Feature">Disable Max Tokens Feature</span>
             </div>
 
             <hr>
