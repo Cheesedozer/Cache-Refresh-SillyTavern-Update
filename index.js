@@ -114,6 +114,7 @@ const defaultSettings = {
     maxTokens: 1,                          // Maximum tokens to request for cache refresh (keeping it minimal to reduce costs)
     showNotifications: true,               // Whether to display toast notifications for each refresh
     showStatusIndicator: true,             // Whether to display the floating status indicator
+    useMaxTokens: true,                    // Whether to use the max tokens feature (disable for problematic providers)
 };
 
 // Initialize extension settings
@@ -257,12 +258,16 @@ async function updateSettingsPanel() {
         $('#cache_refresher_enabled').prop('checked', settings.enabled);
         $('#cache_refresher_show_notifications').prop('checked', settings.showNotifications);
         $('#cache_refresher_show_status_indicator').prop('checked', settings.showStatusIndicator);
+        $('#cache_refresher_use_max_tokens').prop('checked', settings.useMaxTokens);
 
         // Update number inputs with current values
         // Convert milliseconds to minutes for the interval display
         $('#cache_refresher_max_refreshes').val(settings.maxRefreshes);
         $('#cache_refresher_interval').val(settings.refreshInterval / (60 * 1000));
         $('#cache_refresher_min_tokens').val(settings.maxTokens);
+
+        // Enable/disable the max tokens input based on the useMaxTokens setting
+        $('#cache_refresher_max_tokens').prop('disabled', !settings.useMaxTokens);
 
         // Update the status text to show current state
         const statusText = $('#cache_refresher_status_text');
@@ -313,6 +318,13 @@ async function bindSettingsHandlers() {
 
             updateUI();
             updateSettingsPanel();
+        });
+
+        // Use max tokens toggle - controls whether to use the max tokens feature
+        $('#cache_refresher_use_max_tokens').off('change').on('change', async function() {
+            settings.useMaxTokens = $(this).prop('checked');
+            await saveSettings();
+            updateSettingsPanel(); // Update UI to enable/disable the max tokens input
         });
 
         // Max refreshes input - controls how many refreshes to perform before stopping
@@ -481,10 +493,15 @@ async function refreshCache() {
             throw new Error(`Unsupported API for cache refresh: ${mainApi} in refreshCache()`);
         }
 
-        // Temporarily set max tokens to 1 to minimize token usage
-        TempResponseLength.save(mainApi, settings.maxTokens);
-        eventHook = TempResponseLength.setupEventHook(mainApi);
-        debugLog(`Temporarily set response length to ${settings.maxTokens} token`);
+        // Only use max tokens feature if enabled in settings
+        if (settings.useMaxTokens) {
+            // Temporarily set max tokens to the configured value to minimize token usage
+            TempResponseLength.save(mainApi, settings.maxTokens);
+            eventHook = TempResponseLength.setupEventHook(mainApi);
+            debugLog(`Temporarily set response length to ${settings.maxTokens} token(s)`);
+        } else {
+            debugLog('Max tokens feature disabled, using default response length');
+        }
         
         // Send a "quiet" request - this tells SillyTavern not to display the response
         // We're just refreshing the cache, not generating visible content
@@ -498,8 +515,8 @@ async function refreshCache() {
         debugLog('Cache refresh failed', error);
         showNotification(`Cache refresh failed: ${error.message}`, 'error');
     } finally {
-        // Always restore the original max tokens value
-        if (TempResponseLength.isCustomized()) {
+        // Always restore the original max tokens value if it was customized
+        if (settings.useMaxTokens && TempResponseLength.isCustomized()) {
             TempResponseLength.restore(mainApi);
             TempResponseLength.removeEventHook(mainApi, eventHook);
             debugLog('Restored original response length');
