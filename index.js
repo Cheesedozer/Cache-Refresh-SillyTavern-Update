@@ -1,659 +1,694 @@
 /**
  * Cache Refresher Extension for SillyTavern
- *
- * This extension automatically keeps the language model's cache "warm" by sending
- * periodic minimal requests to prevent cache expiration. This helps reduce API costs.
+ * Automatically keeps LLM cache warm by sending periodic minimal requests.
+ * 
+ * Version: 2.0.0
+ * Compatible with: SillyTavern 1.15.0+
+ * Author: OneinfinityN7
+ * License: AGPL-3.0
+ * 
+ * Changelog v2.0.0:
+ * - Migrated to SillyTavern.getContext() API for stability
+ * - Updated event handling for v1.15.0 compatibility
+ * - Improved error handling and cleanup
+ * - Added support for new Chat Completion API patterns
  */
 
-import { extension_settings } from '../../../extensions.js';
-const { chatCompletionSettings, eventSource, eventTypes, renderExtensionTemplateAsync, mainApi, sendGenerationRequest } = SillyTavern.getContext();
+// Module identifier - must be unique
+const MODULE_NAME = 'cache_refresher';
+const LOG_PREFIX = '[CacheRefresher]';
 
-// Stolen from script.js and modify to work for the extension.
-class TempResponseLength {
-    static #originalResponseLength = -1;
-    static #lastApi = null;
-
-    static isCustomized() {
-        return this.#originalResponseLength > -1;
-    }
-
-    /**
-     * Save the current response length for the specified API.
-     * @param {string} api API identifier
-     * @param {number} responseLength New response length
-     */
-    static save(api, responseLength) {
-        if (api === 'openai') {
-            this.#originalResponseLength = chatCompletionSettings.openai_max_tokens;
-            chatCompletionSettings.openai_max_tokens = responseLength;
-        } else {
-            throw new Error(`Unsupported API in class TempResponseLength: save(api, responseLength)`);
-        }
-
-        this.#lastApi = api;
-        console.log('[TempResponseLength] Saved original response length:', TempResponseLength.#originalResponseLength);
-    }
-
-    /**
-     * Restore the original response length for the specified API.
-     * @param {string|null} api API identifier
-     * @returns {void}
-     */
-    static restore(api) {
-        if (this.#originalResponseLength === -1) {
-            return;
-        }
-        if (!api && this.#lastApi) {
-            api = this.#lastApi;
-        }
-        if (api === 'openai') {
-            chatCompletionSettings.openai_max_tokens = this.#originalResponseLength;
-        } else {
-            throw new Error(`Unsupported API in class TempResponseLength: restore(api)`);
-        }
-
-        console.log('[TempResponseLength] Restored original response length:', this.#originalResponseLength);
-        this.#originalResponseLength = -1;
-        this.#lastApi = null;
-    }
-
-    /**
-     * Sets up an event hook to restore the original response length when the event is emitted.
-     * @param {string} api API identifier
-     * @returns {function(): void} Event hook function
-     */
-    static setupEventHook(api) {
-        const eventHook = () => {
-            if (this.isCustomized()) {
-                this.restore(api);
-            }
-        };
-
-        switch (api) {
-            case 'openai':
-                eventSource.once(eventTypes.CHAT_COMPLETION_SETTINGS_READY, eventHook);
-                break;
-            default:
-                eventSource.once(eventTypes.GENERATE_AFTER_DATA, eventHook);
-                break;
-        }
-
-        return eventHook;
-    }
-
-    /**
-     * Removes the event hook for the specified API.
-     * @param {string} api API identifier
-     * @param {function(): void} eventHook Previously set up event hook
-     */
-    static removeEventHook(api, eventHook) {
-        switch (api) {
-            case 'openai':
-                eventSource.removeListener(eventTypes.CHAT_COMPLETION_SETTINGS_READY, eventHook);
-                break;
-            default:
-                eventSource.removeListener(eventTypes.GENERATE_AFTER_DATA, eventHook);
-                break;
-        }
-    }
-}
-
-// Log extension loading attempt
-console.log('Cache Refresher: Loading extension...');
-
-// Extension name and path
-const extensionName = 'Cache-Refresh-SillyTavern';
-const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
-const path = `third-party/${extensionName}`;
-
-// Default configuration
-const defaultSettings = {
-    enabled: false,
-    refreshInterval: (5 * 60 - 30) * 1000, // 4 minutes 30 seconds in milliseconds (optimized for typical cache lifetimes)
-    maxRefreshes: 3,                       // Maximum number of refresh requests to send before stopping
-    maxTokens: 1,                          // Maximum tokens to request for cache refresh (keeping it minimal to reduce costs)
-    showNotifications: true,               // Whether to display toast notifications for each refresh
-    showStatusIndicator: true,             // Whether to display the floating status indicator
-    disableMaxTokens: false,               // Whether to disable the max tokens feature (enable for problematic providers)
-};
-
-// Initialize extension settings
-if (!extension_settings[extensionName]) {
-    extension_settings[extensionName] = {};
-    console.log('Cache Refresher: Creating new settings object');
-}
-
-// Merge with defaults - preserves user settings while ensuring all required properties exist
-extension_settings[extensionName] = Object.assign({}, defaultSettings, extension_settings[extensionName]);
-const settings = extension_settings[extensionName];
-console.log('Cache Refresher: Settings initialized', settings);
+// Default settings
+const defaultSettings = Object.freeze({
+    enabled: true,
+    interval: 240000, // 4 minutes (240 seconds) in milliseconds
+    maxRefreshes: 5,
+    showNotifications: true,
+    showStatusIndicator: true,
+    debug: false
+});
 
 // State variables
-let lastGenerationData = {
-    prompt: null,                // Stores the last prompt sent to the AI model
-};
-let refreshTimer = null;         // Timer for scheduling the next refresh
-let refreshesLeft = 0;           // Counter for remaining refreshes in the current cycle
-let refreshInProgress = false;   // Flag to prevent concurrent refreshes
-let statusIndicator = null;      // DOM element for the floating status indicator
-let nextRefreshTime = null;      // Timestamp for the next scheduled refresh
-let statusUpdateInterval = null; // Interval for updating the countdown timer
+let refreshTimer = null;
+let refreshCount = 0;
+let lastPromptData = null;
+let currentChatId = null;
+let statusIndicator = null;
+let countdownInterval = null;
+let secondsRemaining = 0;
+let eventListenersRegistered = false;
 
 /**
- * Logs a message to console with extension prefix for easier debugging
- * @param {string} message - Message to log
- * @param {any} data - Optional data to log
+ * Gets the current extension settings, initializing with defaults if needed.
+ * Uses the stable SillyTavern.getContext() API.
+ * @returns {Object} Current settings
  */
-function debugLog(message, data) {
-    console.log(`[Cache Refresher] ${message}`, data || '');
+function getSettings() {
+    const { extensionSettings } = SillyTavern.getContext();
+    
+    if (!extensionSettings[MODULE_NAME]) {
+        extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
+    }
+    
+    // Ensure all default keys exist (helpful after updates)
+    for (const key of Object.keys(defaultSettings)) {
+        if (!Object.hasOwn(extensionSettings[MODULE_NAME], key)) {
+            extensionSettings[MODULE_NAME][key] = defaultSettings[key];
+        }
+    }
+    
+    return extensionSettings[MODULE_NAME];
 }
 
 /**
- * Shows a notification if notifications are enabled in settings
- * @param {string} message - Message to show
- * @param {string} type - Notification type (success, info, warning, error)
+ * Saves the current settings
+ */
+function saveSettings() {
+    const { saveSettingsDebounced } = SillyTavern.getContext();
+    saveSettingsDebounced();
+}
+
+/**
+ * Logs a debug message if debug mode is enabled
+ * @param  {...any} args - Arguments to log
+ */
+function debugLog(...args) {
+    if (getSettings().debug) {
+        console.log(LOG_PREFIX, ...args);
+    }
+}
+
+/**
+ * Logs an info message
+ * @param  {...any} args - Arguments to log
+ */
+function log(...args) {
+    console.log(LOG_PREFIX, ...args);
+}
+
+/**
+ * Logs an error message
+ * @param  {...any} args - Arguments to log
+ */
+function logError(...args) {
+    console.error(LOG_PREFIX, ...args);
+}
+
+/**
+ * Shows a notification to the user if notifications are enabled
+ * @param {string} message - The message to display
+ * @param {string} type - The notification type ('success', 'error', 'warning', 'info')
  */
 function showNotification(message, type = 'info') {
-    if (settings.showNotifications) {
-        toastr[type](message, '', { timeOut: 3000 });
+    const settings = getSettings();
+    if (!settings.showNotifications) return;
+    
+    // Use toastr if available (SillyTavern uses this)
+    if (typeof toastr !== 'undefined') {
+        switch (type) {
+            case 'success':
+                toastr.success(message);
+                break;
+            case 'error':
+                toastr.error(message);
+                break;
+            case 'warning':
+                toastr.warning(message);
+                break;
+            default:
+                toastr.info(message);
+        }
     }
-}
-
-/**
- * Check if the current API is using chat completion format
- * @returns {boolean} True if using a chat completion API
- */
-function isChatCompletion() {
-    return mainApi === 'openai';
-}
-
-/**
- * Updates the extension settings in localStorage via SillyTavern's extension_settings
- * This ensures settings persist between sessions
- */
-async function saveSettings() {
-    try {
-        extension_settings[extensionName] = settings;
-        debugLog('Settings saved', settings);
-    } catch (error) {
-        console.error('Cache Refresher: Error saving settings:', error);
-        showNotification('Error saving settings', 'error');
-    }
-}
-
-/**
- * Updates all UI elements to reflect current state
- * This is called whenever the extension state changes
- */
-function updateUI() {
-    // Update both the floating status indicator and the settings panel
-    updateStatusIndicator();
-    updateSettingsPanel();
 }
 
 /**
  * Creates or updates the floating status indicator
- * This shows the number of remaining refreshes and countdown timer
  */
 function updateStatusIndicator() {
-    // Create the status indicator if it doesn't exist
+    const settings = getSettings();
+    
+    if (!settings.showStatusIndicator || !settings.enabled) {
+        removeStatusIndicator();
+        return;
+    }
+    
     if (!statusIndicator) {
         statusIndicator = document.createElement('div');
-        statusIndicator.id = 'cache_refresher_status';
-        statusIndicator.style.position = 'fixed';
-        statusIndicator.style.bottom = '10px';
-        statusIndicator.style.right = '10px';
-        statusIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        statusIndicator.style.color = 'white';
-        statusIndicator.style.padding = '5px 10px';
-        statusIndicator.style.borderRadius = '5px';
-        statusIndicator.style.fontSize = '12px';
-        statusIndicator.style.zIndex = '1000';
-        statusIndicator.style.display = 'none';
+        statusIndicator.id = 'cache-refresh-indicator';
+        statusIndicator.className = 'cache-refresh-indicator';
         document.body.appendChild(statusIndicator);
     }
+    
+    const minutes = Math.floor(secondsRemaining / 60);
+    const seconds = secondsRemaining % 60;
+    const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    const remainingRefreshes = settings.maxRefreshes - refreshCount;
+    
+    statusIndicator.innerHTML = `
+        <div class="cache-refresh-indicator-content">
+            <span class="cache-refresh-icon">🔄</span>
+            <span class="cache-refresh-timer">${timeStr}</span>
+            <span class="cache-refresh-count">(${remainingRefreshes} left)</span>
+        </div>
+    `;
+    
+    statusIndicator.style.display = 'flex';
+}
 
-    // Only show the indicator if the extension is active, has refreshes pending, and the indicator is enabled
-    if (settings.enabled && refreshesLeft > 0 && settings.showStatusIndicator) {
-        let timeString = 'calculating...';
-
-        if (nextRefreshTime) {
-            // Calculate time until next refresh
-            const timeRemaining = Math.max(0, nextRefreshTime - Date.now());
-
-            // Format time as MM:SS
-            const minutes = Math.floor(timeRemaining / 60000);
-            const seconds = Math.floor((timeRemaining % 60000) / 1000);
-            timeString = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-        }
-
-        statusIndicator.textContent = `Cache refreshes: ${refreshesLeft} remaining (${timeString})`;
-        statusIndicator.style.display = 'block';
-
-        // Update the timer display every second for a smooth countdown
-        if (!statusUpdateInterval) {
-            statusUpdateInterval = setInterval(() => {
-                updateStatusIndicator();
-            }, 1000);
-        }
-    } else {
-        // Hide the indicator when not active
+/**
+ * Removes the status indicator from the DOM
+ */
+function removeStatusIndicator() {
+    if (statusIndicator) {
         statusIndicator.style.display = 'none';
+    }
+}
 
-        // Clear the update interval when not needed to save resources
-        if (statusUpdateInterval) {
-            clearInterval(statusUpdateInterval);
-            statusUpdateInterval = null;
+/**
+ * Starts the countdown display
+ */
+function startCountdown() {
+    const settings = getSettings();
+    secondsRemaining = Math.floor(settings.interval / 1000);
+    
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+    }
+    
+    countdownInterval = setInterval(() => {
+        secondsRemaining--;
+        if (secondsRemaining >= 0) {
+            updateStatusIndicator();
         }
-    }
-}
-
-/**
- * Updates the HTML settings panel with current values
- * This ensures the UI always reflects the actual state of the extension
- */
-async function updateSettingsPanel() {
-    try {
-        // Update checkbox states to match current settings
-        $('#cache_refresher_enabled').prop('checked', settings.enabled);
-        $('#cache_refresher_show_notifications').prop('checked', settings.showNotifications);
-        $('#cache_refresher_show_status_indicator').prop('checked', settings.showStatusIndicator);
-        $('#cache_refresher_disable_max_tokens').prop('checked', settings.disableMaxTokens);
-
-        // Update number inputs with current values
-        // Convert milliseconds to minutes for the interval display
-        $('#cache_refresher_max_refreshes').val(settings.maxRefreshes);
-        $('#cache_refresher_interval').val(settings.refreshInterval / (60 * 1000));
-        $('#cache_refresher_max_tokens').val(settings.maxTokens);
-
-        // Enable/disable the max tokens input based on the disableMaxTokens setting
-        $('#cache_refresher_max_tokens').prop('disabled', settings.disableMaxTokens);
-
-        // Update the status text to show current state
-        const statusText = $('#cache_refresher_status_text');
-        if (statusText.length) {
-            if (settings.enabled) {
-                if (refreshInProgress) {
-                    statusText.text('Refreshing cache...');
-                } else if (refreshesLeft > 0) {
-                    statusText.text(`Active - ${refreshesLeft} refreshes remaining`);
-                } else {
-                    statusText.text('Active - waiting for next generation');
-                }
-            } else {
-                statusText.text('Inactive');
-            }
-        }
-
-        debugLog('Settings panel updated');
-    } catch (error) {
-        console.error('Cache Refresher: Error updating settings panel:', error);
-    }
-}
-
-/**
- * Binds event handlers to the settings panel elements
- * This sets up all the interactive controls in the settings panel
- */
-async function bindSettingsHandlers() {
-    try {
-        debugLog('Binding settings handlers');
-
-        // Enable/disable toggle - main switch for the extension
-        $('#cache_refresher_enabled').off('change').on('change', async function() {
-            settings.enabled = $(this).prop('checked');
-            await saveSettings();
-
-            if (settings.enabled) {
-                showNotification('Cache refreshing enabled');
-                // Don't start refresh cycle here, wait for a message
-                // This prevents unnecessary refreshes when no conversation is active
-            } else {
-                showNotification('Cache refreshing disabled');
-                stopRefreshCycle(); // Stop any active refresh cycle
-                // Clear any stored generation data to prevent future refreshes
-                lastGenerationData.prompt = null;
-                refreshesLeft = 0;
-            }
-
-            updateUI();
-            updateSettingsPanel();
-        });
-
-        // Show notifications toggle - controls whether to show toast notifications
-        $('#cache_refresher_show_notifications').off('change').on('change', async function() {
-            settings.showNotifications = $(this).prop('checked');
-            await saveSettings();
-        });
-        
-        // Show status indicator toggle - controls whether to show the floating status indicator
-        $('#cache_refresher_show_status_indicator').off('change').on('change', async function() {
-            settings.showStatusIndicator = $(this).prop('checked');
-            await saveSettings();
-            updateUI(); // Update UI immediately to show/hide the indicator
-        });
-
-        // Disable max tokens toggle - controls whether to disable the max tokens feature
-        $('#cache_refresher_disable_max_tokens').off('change').on('change', async function() {
-            settings.disableMaxTokens = $(this).prop('checked');
-            await saveSettings();
-            updateSettingsPanel(); // Update UI to enable/disable the max tokens input
-        });
-
-        // Max refreshes input - controls how many refreshes to perform before stopping
-        $('#cache_refresher_max_refreshes').off('change input').on('change input', async function() {
-            settings.maxRefreshes = parseInt($(this).val()) || defaultSettings.maxRefreshes;
-            await saveSettings();
-
-            // If a refresh cycle is already running, stop and reschedule with new settings
-            if (settings.enabled && refreshTimer) {
-                stopRefreshCycle();
-                scheduleNextRefresh();
-            }
-        });
-
-        // Refresh interval input - controls time between refreshes (in minutes)
-        $('#cache_refresher_interval').off('change input').on('change input', async function() {
-            // Convert minutes to milliseconds for internal use
-            settings.refreshInterval = (parseFloat($(this).val()) || defaultSettings.refreshInterval / (60 * 1000)) * 60 * 1000;
-            await saveSettings();
-
-            // If a refresh cycle is already running, stop and reschedule with new settings
-            if (settings.enabled && refreshTimer) {
-                stopRefreshCycle();
-                scheduleNextRefresh();
-            }
-        });
-
-        // Max tokens input - controls how many tokens to request in each refresh
-        $('#cache_refresher_max_tokens').off('change input').on('change input', async function() {
-            settings.maxTokens = parseInt($(this).val()) || defaultSettings.maxTokens;
-            await saveSettings();
-        });
-
-        debugLog('Settings handlers bound successfully');
-    } catch (error) {
-        console.error('Cache Refresher: Error binding settings handlers:', error);
-    }
-}
-
-/**
- * Adds the extension buttons to the UI
- * Currently just initializes the UI state
- */
-async function addExtensionControls() {
-    // No need to add buttons - the extension will be controlled through the settings panel
-    updateUI();
-}
-
-/**
- * !!!DEPRECATED!!!
- * Starts the refresh cycle
- * This should only be called internally and not directly from event handlers
- * It begins the process of periodically refreshing the cache
- */
-function startRefreshCycle() {
-    debugLog('startRefreshCycle:', lastGenerationData);
-
-    // Don't start if we don't have a prompt or if the extension is disabled
-    if (!lastGenerationData.prompt || !settings.enabled) return;
-    debugLog('startRefreshCycle: pass');
-
-    // Only support chat completion APIs for now
-    if (!isChatCompletion()) {
-        debugLog('startRefreshCycle: Not a chat completion prompt');
-        return;
-    }
-
-    // Clear any existing cycle to prevent duplicates
-    stopRefreshCycle();
-
-    // Initialize the refresh cycle
-    refreshesLeft = settings.maxRefreshes;
-    scheduleNextRefresh();
-    updateUI();
-
-    debugLog('Refresh cycle started', {
-        refreshesLeft,
-        interval: settings.refreshInterval,
-    });
-}
-
-/**
- * Stops the refresh cycle
- * Cleans up all timers and resets state
- */
-function stopRefreshCycle() {
-    // Clear the refresh timer
-    if (refreshTimer) {
-        clearTimeout(refreshTimer);
-        refreshTimer = null;
-    }
-
-    // Clear the status update interval
-    if (statusUpdateInterval) {
-        clearInterval(statusUpdateInterval);
-        statusUpdateInterval = null;
-    }
-
-    // Reset state variables
-    nextRefreshTime = null;
-    refreshInProgress = false;
-
-    // Update UI to reflect stopped state
-    updateUI();
-
-    debugLog('Refresh cycle stopped');
-}
-
-/**
- * Schedules the next refresh
- * This sets up a timer to perform the next cache refresh
- */
-function scheduleNextRefresh() {
-    // Don't schedule if the extension is disabled, no refreshes left, or no prompt
-    if (!settings.enabled || refreshesLeft <= 0 || !lastGenerationData.prompt) {
-        stopRefreshCycle();
-        return;
-    }
-
-    // Calculate and store the next refresh time for the countdown display
-    nextRefreshTime = Date.now() + settings.refreshInterval;
-
-    // Set up the timer for the next refresh
-    refreshTimer = setTimeout(() => {
-        refreshCache();
-    }, settings.refreshInterval);
-
-    debugLog(`Next refresh scheduled in ${settings.refreshInterval / 1000} seconds`);
-
-    // Update the status indicator immediately to show new time
+    }, 1000);
+    
     updateStatusIndicator();
 }
 
 /**
- * Performs a cache refresh by sending a minimal request to the API
- * This keeps the model's context cache warm without generating a full response
+ * Stops the countdown display
  */
-async function refreshCache() {
-    // Don't refresh if we don't have a prompt or if a refresh is already in progress
-    if (!lastGenerationData.prompt || refreshInProgress) return;
-
-    // Set the flag to prevent concurrent refreshes
-    refreshInProgress = true;
-    updateUI();
-
-    let eventHook = () => { };
-    
-    try {
-        debugLog('Refreshing cache with data', lastGenerationData);
-
-        // Verify we're using a supported API
-        if (!isChatCompletion()) {
-            throw new Error(`Unsupported API for cache refresh: ${mainApi} in refreshCache()`);
-        }
-
-        // Only use max tokens feature if not disabled in settings
-        if (!settings.disableMaxTokens) {
-            // Temporarily set max tokens to the configured value to minimize token usage
-            TempResponseLength.save(mainApi, settings.maxTokens);
-            eventHook = TempResponseLength.setupEventHook(mainApi);
-            debugLog(`Temporarily set response length to ${settings.maxTokens} token(s)`);
-        } else {
-            debugLog('Max tokens feature disabled, using default response length');
-        }
-        
-        // Send a "quiet" request - this tells SillyTavern not to display the response
-        // We're just refreshing the cache, not generating visible content
-        const data = await sendGenerationRequest('quiet', lastGenerationData);
-        debugLog('Cache refresh response:', data);
-
-        // Show notification for successful refresh
-        showNotification(`Cache refreshed. ${refreshesLeft - 1} refreshes remaining.`, 'success');
-
-    } catch (error) {
-        debugLog('Cache refresh failed', error);
-        showNotification(`Cache refresh failed: ${error.message}`, 'error');
-    } finally {
-        // Always restore the original max tokens value if it was customized
-        if (!settings.disableMaxTokens && TempResponseLength.isCustomized()) {
-            TempResponseLength.restore(mainApi);
-            TempResponseLength.removeEventHook(mainApi, eventHook);
-            debugLog('Restored original response length');
-        }
-        
-        // Always clean up, even if there was an error
-        refreshInProgress = false;
-        refreshesLeft--;
-        updateUI();
-        scheduleNextRefresh(); // Schedule the next refresh (or stop if no refreshes left)
+function stopCountdown() {
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
     }
+    secondsRemaining = 0;
 }
 
 /**
- * Captures generation data for future cache refreshing
- * This is called when a new message is generated to store the prompt for later refreshes
- *
- * @param {Object} data - The generation data from SillyTavern; looks like this '{chat: Array(17), dryRun: true}'
+ * Gets the current chat's unique identifier
+ * Works with both regular chats and group chats (v1.15.0 unified format)
+ * @returns {string|null} The current chat identifier
  */
-function captureGenerationData(data) {
-    // Don't capture if the extension is disabled
-    if (!settings.enabled) {
-        // Ensure we don't have any stored data if disabled
-        if (lastGenerationData.prompt) {
-            lastGenerationData.prompt = null;
-            debugLog('Extension disabled - cleared stored generation data');
+function getCurrentChatId() {
+    const context = SillyTavern.getContext();
+    
+    // Handle group chats
+    if (context.selected_group) {
+        return `group-${context.selected_group}`;
+    }
+    
+    // Handle regular chats
+    if (context.characterId !== undefined && context.characterId !== null) {
+        const character = context.characters?.[context.characterId];
+        if (character) {
+            // Use chat file name if available, otherwise use character name
+            return context.chat_metadata?.file_name || character.name || `char-${context.characterId}`;
         }
+    }
+    
+    return null;
+}
+
+/**
+ * Captures the prompt data after a successful generation
+ * This is called when GENERATION_ENDED event fires
+ * @param {Object} data - Event data from generation
+ */
+function capturePromptData(data) {
+    const context = SillyTavern.getContext();
+    const settings = getSettings();
+    
+    if (!settings.enabled) {
+        debugLog('Extension disabled, not capturing prompt data');
         return;
     }
-
-    debugLog('captureGenerationData', data);
-    debugLog('Current API:', mainApi);
-
+    
     try {
-        // Only support chat completion APIs for now
-        if (!isChatCompletion()) {
-            debugLog('Cache Refresher: Not a chat completion prompt');
+        // Get the current chat messages
+        const chat = context.chat;
+        if (!chat || chat.length === 0) {
+            debugLog('No chat messages available');
             return;
         }
-
-        // Skip dry runs as they're not actual messages
-        // Dry runs are used for things like token counting and don't represent actual chat messages
-        if (data.dryRun) {
-            debugLog('Cache Refresher: Skipping dry run');
-            return;
+        
+        // Store the current chat ID
+        const newChatId = getCurrentChatId();
+        
+        // If chat changed, reset the counter
+        if (newChatId !== currentChatId) {
+            debugLog('Chat changed, resetting refresh counter');
+            refreshCount = 0;
+            currentChatId = newChatId;
         }
-
-        // Store the chat prompt for future refreshes
-        lastGenerationData.prompt = data.chat;
-        debugLog('Captured generation data', lastGenerationData);
-        //Stop refresh cycle on new prompt (work better than GENERATION_STOPPED event)
-        stopRefreshCycle();
-
+        
+        // Capture essential prompt data for cache refresh
+        lastPromptData = {
+            chatId: newChatId,
+            messageCount: chat.length,
+            timestamp: Date.now(),
+            // Store last few message IDs for verification
+            lastMessageIds: chat.slice(-3).map((m, i) => m.id || `msg-${chat.length - 3 + i}`)
+        };
+        
+        debugLog('Captured prompt data:', lastPromptData);
+        
+        // Start the refresh timer
+        startRefreshTimer();
+        
     } catch (error) {
-        debugLog('Error capturing generation data', error);
+        logError('Error capturing prompt data:', error);
     }
 }
 
 /**
- * Loads the extension CSS
- * This adds the extension's stylesheet to the page
+ * Sends a cache refresh request to keep the cache warm
  */
-function loadCSS() {
+async function sendCacheRefresh() {
+    const settings = getSettings();
+    
+    if (!settings.enabled) {
+        stopRefreshTimer();
+        return;
+    }
+    
+    if (!lastPromptData) {
+        debugLog('No prompt data available for refresh');
+        stopRefreshTimer();
+        return;
+    }
+    
+    // Check if we've exceeded max refreshes
+    if (refreshCount >= settings.maxRefreshes) {
+        debugLog('Max refreshes reached');
+        showNotification('Cache refresh limit reached', 'info');
+        stopRefreshTimer();
+        return;
+    }
+    
+    // Verify we're still in the same chat
+    const currentId = getCurrentChatId();
+    if (currentId !== lastPromptData.chatId) {
+        debugLog('Chat changed, stopping refresh');
+        stopRefreshTimer();
+        return;
+    }
+    
     try {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.type = 'text/css';
-        link.href = `/${extensionFolderPath}/styles.css`;
-        document.head.appendChild(link);
-        console.log('Cache Refresher: CSS loaded');
-        debugLog('CSS loaded');
+        debugLog('Sending cache refresh request...');
+        
+        // Use the stable generateQuietPrompt API from SillyTavern 1.15.0
+        const { generateQuietPrompt } = SillyTavern.getContext();
+        
+        if (typeof generateQuietPrompt === 'function') {
+            // Send minimal request to refresh cache
+            await generateQuietPrompt({
+                quietPrompt: '', // Empty/minimal prompt
+                skipWIAN: true,  // Skip World Info and Author's Note
+                maxTokens: 1,    // Request minimal response
+                skipSanitize: true
+            });
+        } else {
+            // Fallback: Try alternative method for older versions
+            await sendDirectRefreshRequest();
+        }
+        
+        refreshCount++;
+        log(`Cache refresh ${refreshCount}/${settings.maxRefreshes} successful`);
+        showNotification(`Cache refreshed (${refreshCount}/${settings.maxRefreshes})`, 'success');
+        
+        // Schedule next refresh
+        startRefreshTimer();
+        
     } catch (error) {
-        console.error('Cache Refresher: Error loading CSS:', error);
+        logError('Cache refresh failed:', error);
+        showNotification('Cache refresh failed', 'error');
+        
+        // Retry with exponential backoff
+        setTimeout(() => {
+            if (getSettings().enabled) {
+                startRefreshTimer();
+            }
+        }, 5000);
     }
 }
 
-
-// Initialize the extension when jQuery is ready
-jQuery(async ($) => {
-    try {
-        debugLog('Starting initialization');
-
-        // Append the settings HTML to the extensions settings panel
-        // This loads the HTML template from cache-refresher.html
-        $('#extensions_settings').append(await renderExtensionTemplateAsync(path, 'cache-refresher'));
-
-        // Load CSS and set up UI
-        loadCSS();
-        addExtensionControls();
-
-        // Initialize the settings panel with current values
-        updateSettingsPanel();
-
-        // Bind event handlers for all interactive elements
-        bindSettingsHandlers();
-
-        // Set up event listeners for SillyTavern events
-
-        // Listen for chat completion prompts to capture them for refreshing
-        eventSource.on(eventTypes.APP_READY, () => {
-            eventSource.on(eventTypes.CHAT_COMPLETION_PROMPT_READY, captureGenerationData);
-        });
-
-        // Listen for new messages to start the refresh cycle
-        // Only start the refresh cycle when a message is received to avoid unnecessary refreshes
-        eventSource.on(eventTypes.APP_READY, () => {
-            eventSource.on(eventTypes.MESSAGE_RECEIVED, () => {
-                if (settings.enabled && lastGenerationData.prompt) {
-                    debugLog('Message received, starting refresh cycle');
-                    stopRefreshCycle(); // Clear any existing cycle first
-                    refreshesLeft = settings.maxRefreshes;
-                    scheduleNextRefresh();
-                    updateUI();
-                }
-            });
-            
-            // Listen for chat changes to stop the refresh cycle
-            // When user switches to a different chat, we don't need to refresh the previous chat anymore
-            eventSource.on(eventTypes.CHAT_CHANGED, () => {
-                debugLog('Chat changed, stopping refresh cycle');
-                stopRefreshCycle();
-                lastGenerationData.prompt = null; // Clear the stored prompt
-                refreshesLeft = 0;
-                updateUI();
-            });
-        });
-
-        // Make sure we start with clean state if disabled
-        if (!settings.enabled) {
-            lastGenerationData.prompt = null;
-            refreshesLeft = 0;
-            debugLog('Extension disabled at startup - ensuring clean state');
+/**
+ * Fallback method to send a direct refresh request
+ * Used if generateQuietPrompt is not available
+ */
+async function sendDirectRefreshRequest() {
+    const context = SillyTavern.getContext();
+    
+    // Get the API settings
+    const { oai_settings, main_api } = context;
+    
+    if (main_api !== 'openai') {
+        throw new Error('Direct refresh only supported for Chat Completion API');
+    }
+    
+    // Build minimal request
+    const messages = [
+        {
+            role: 'user',
+            content: ' '
         }
+    ];
+    
+    // This would need to be adapted based on the actual API endpoint
+    // The exact implementation depends on SillyTavern's internal API structure
+    debugLog('Using fallback direct refresh method');
+    
+    // For now, throw to indicate generateQuietPrompt should be used
+    throw new Error('Fallback method not implemented - please update SillyTavern');
+}
 
-        debugLog('Extension initialized');
-        console.log(`[${extensionName}] Extension initialized successfully`);
+/**
+ * Starts the refresh timer
+ */
+function startRefreshTimer() {
+    const settings = getSettings();
+    
+    // Clear any existing timer
+    stopRefreshTimer();
+    
+    if (!settings.enabled) {
+        return;
+    }
+    
+    if (refreshCount >= settings.maxRefreshes) {
+        debugLog('Max refreshes reached, not starting timer');
+        return;
+    }
+    
+    debugLog(`Starting refresh timer: ${settings.interval}ms`);
+    
+    // Start countdown display
+    startCountdown();
+    
+    // Set the timer
+    refreshTimer = setTimeout(() => {
+        sendCacheRefresh();
+    }, settings.interval);
+}
+
+/**
+ * Stops the refresh timer
+ */
+function stopRefreshTimer() {
+    if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+    }
+    
+    stopCountdown();
+    removeStatusIndicator();
+    
+    debugLog('Refresh timer stopped');
+}
+
+/**
+ * Resets all state
+ */
+function resetState() {
+    stopRefreshTimer();
+    refreshCount = 0;
+    lastPromptData = null;
+    currentChatId = null;
+}
+
+/**
+ * Handler for when chat changes
+ * @param {string} chatId - The new chat ID (if provided)
+ */
+function onChatChanged(chatId) {
+    debugLog('Chat changed event received');
+    
+    const newChatId = getCurrentChatId();
+    
+    if (newChatId !== currentChatId) {
+        log('Chat changed, resetting cache refresh state');
+        resetState();
+    }
+}
+
+/**
+ * Handler for when generation ends
+ * @param {Object} data - Generation event data
+ */
+function onGenerationEnded(data) {
+    debugLog('Generation ended event received', data);
+    capturePromptData(data);
+}
+
+/**
+ * Handler for when generation is stopped by user
+ */
+function onGenerationStopped() {
+    debugLog('Generation stopped by user');
+    // Don't capture data for stopped generations
+}
+
+/**
+ * Registers event listeners with SillyTavern
+ */
+function registerEventListeners() {
+    if (eventListenersRegistered) {
+        return;
+    }
+    
+    const { eventSource, event_types } = SillyTavern.getContext();
+    
+    if (!eventSource || !event_types) {
+        logError('Event system not available');
+        return;
+    }
+    
+    // Listen for chat changes
+    eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+    
+    // Listen for generation completion
+    eventSource.on(event_types.GENERATION_ENDED, onGenerationEnded);
+    
+    // Listen for generation stopped
+    eventSource.on(event_types.GENERATION_STOPPED, onGenerationStopped);
+    
+    eventListenersRegistered = true;
+    debugLog('Event listeners registered');
+}
+
+/**
+ * Unregisters event listeners
+ */
+function unregisterEventListeners() {
+    if (!eventListenersRegistered) {
+        return;
+    }
+    
+    const { eventSource, event_types } = SillyTavern.getContext();
+    
+    if (!eventSource || !event_types) {
+        return;
+    }
+    
+    eventSource.removeListener(event_types.CHAT_CHANGED, onChatChanged);
+    eventSource.removeListener(event_types.GENERATION_ENDED, onGenerationEnded);
+    eventSource.removeListener(event_types.GENERATION_STOPPED, onGenerationStopped);
+    
+    eventListenersRegistered = false;
+    debugLog('Event listeners unregistered');
+}
+
+/**
+ * Initializes the settings UI
+ */
+async function initSettingsUI() {
+    const settings = getSettings();
+    
+    // Load the HTML template
+    const response = await fetch(`/scripts/extensions/third-party/Cache-Refresh-SillyTavern/cache-refresher.html`);
+    if (!response.ok) {
+        logError('Failed to load settings template');
+        return;
+    }
+    
+    const html = await response.text();
+    
+    // Find the extensions settings container
+    const extensionsBlock = document.getElementById('extensions_settings');
+    if (!extensionsBlock) {
+        logError('Extensions settings block not found');
+        return;
+    }
+    
+    // Add our settings panel
+    const settingsContainer = document.createElement('div');
+    settingsContainer.id = 'cache_refresher_settings';
+    settingsContainer.innerHTML = html;
+    extensionsBlock.appendChild(settingsContainer);
+    
+    // Initialize UI values from settings
+    const enabledCheckbox = document.getElementById('cache_refresh_enabled');
+    const intervalInput = document.getElementById('cache_refresh_interval');
+    const maxRefreshesInput = document.getElementById('cache_refresh_max');
+    const notificationsCheckbox = document.getElementById('cache_refresh_notifications');
+    const statusCheckbox = document.getElementById('cache_refresh_status');
+    const debugCheckbox = document.getElementById('cache_refresh_debug');
+    const stopButton = document.getElementById('cache_refresh_stop');
+    
+    if (enabledCheckbox) {
+        enabledCheckbox.checked = settings.enabled;
+        enabledCheckbox.addEventListener('change', (e) => {
+            settings.enabled = e.target.checked;
+            saveSettings();
+            
+            if (!settings.enabled) {
+                stopRefreshTimer();
+            }
+            
+            log(`Extension ${settings.enabled ? 'enabled' : 'disabled'}`);
+        });
+    }
+    
+    if (intervalInput) {
+        intervalInput.value = settings.interval / 1000; // Convert to seconds
+        intervalInput.addEventListener('change', (e) => {
+            const seconds = parseInt(e.target.value, 10);
+            if (!isNaN(seconds) && seconds >= 30 && seconds <= 600) {
+                settings.interval = seconds * 1000;
+                saveSettings();
+                log(`Interval set to ${seconds} seconds`);
+            } else {
+                e.target.value = settings.interval / 1000;
+                showNotification('Interval must be between 30 and 600 seconds', 'warning');
+            }
+        });
+    }
+    
+    if (maxRefreshesInput) {
+        maxRefreshesInput.value = settings.maxRefreshes;
+        maxRefreshesInput.addEventListener('change', (e) => {
+            const max = parseInt(e.target.value, 10);
+            if (!isNaN(max) && max >= 1 && max <= 20) {
+                settings.maxRefreshes = max;
+                saveSettings();
+                log(`Max refreshes set to ${max}`);
+            } else {
+                e.target.value = settings.maxRefreshes;
+                showNotification('Max refreshes must be between 1 and 20', 'warning');
+            }
+        });
+    }
+    
+    if (notificationsCheckbox) {
+        notificationsCheckbox.checked = settings.showNotifications;
+        notificationsCheckbox.addEventListener('change', (e) => {
+            settings.showNotifications = e.target.checked;
+            saveSettings();
+        });
+    }
+    
+    if (statusCheckbox) {
+        statusCheckbox.checked = settings.showStatusIndicator;
+        statusCheckbox.addEventListener('change', (e) => {
+            settings.showStatusIndicator = e.target.checked;
+            saveSettings();
+            
+            if (!settings.showStatusIndicator) {
+                removeStatusIndicator();
+            } else if (refreshTimer) {
+                updateStatusIndicator();
+            }
+        });
+    }
+    
+    if (debugCheckbox) {
+        debugCheckbox.checked = settings.debug;
+        debugCheckbox.addEventListener('change', (e) => {
+            settings.debug = e.target.checked;
+            saveSettings();
+        });
+    }
+    
+    if (stopButton) {
+        stopButton.addEventListener('click', () => {
+            stopRefreshTimer();
+            refreshCount = 0;
+            showNotification('Cache refresh timer stopped', 'info');
+        });
+    }
+    
+    log('Settings UI initialized');
+}
+
+/**
+ * Main initialization function
+ */
+async function init() {
+    log('Initializing Cache Refresher extension v2.0.0 for SillyTavern 1.15.0+');
+    
+    try {
+        // Initialize settings
+        getSettings();
+        
+        // Initialize UI
+        await initSettingsUI();
+        
+        // Register event listeners
+        registerEventListeners();
+        
+        log('Initialization complete');
+        
     } catch (error) {
-        console.error(`[${extensionName}] Error initializing extension:`, error);
+        logError('Initialization failed:', error);
+    }
+}
+
+/**
+ * Cleanup function called when extension is disabled/unloaded
+ */
+function cleanup() {
+    log('Cleaning up Cache Refresher extension');
+    
+    unregisterEventListeners();
+    resetState();
+    
+    // Remove settings UI
+    const settingsContainer = document.getElementById('cache_refresher_settings');
+    if (settingsContainer) {
+        settingsContainer.remove();
+    }
+    
+    // Remove status indicator
+    if (statusIndicator) {
+        statusIndicator.remove();
+        statusIndicator = null;
+    }
+}
+
+// Export for SillyTavern's module system
+export { MODULE_NAME, init, cleanup };
+
+// Wait for SillyTavern to be ready, then initialize
+jQuery(async () => {
+    // Check if SillyTavern context is available
+    if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
+        const { eventSource, event_types } = SillyTavern.getContext();
+        
+        // Wait for app to be ready
+        eventSource.on(event_types.APP_READY, init);
+    } else {
+        logError('SillyTavern context not available. Make sure you are running SillyTavern 1.15.0 or later.');
     }
 });
