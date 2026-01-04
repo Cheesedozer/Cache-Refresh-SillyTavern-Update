@@ -1,31 +1,206 @@
-/* styles.css */
-/**
- * Cache Refresher Extension Styles
- */
+/* Cache Refresher Extension Styles */
+/* Compatible with SillyTavern 1.15.0+ */
 
-/* Floating status indicator styles */
-#cache_refresher_status {
-    /* Styles for the floating status indicator that shows refresh count and timer */
-    position: fixed;
-    bottom: 10px;
-    right: 10px;
-    background-color: rgba(0, 0, 0, 0.7);
-    color: white;
-    padding: 5px 10px;
+/* Settings Panel Styles */
+.cache-refresher-settings {
+    margin-top: 10px;
+}
+
+.cache-refresher-block {
+    padding: 10px;
+}
+
+.cache-refresher-description {
+    margin-bottom: 15px;
+    padding: 10px;
+    background: var(--SmartThemeBlurTintColor);
     border-radius: 5px;
-    font-size: 12px;
-    z-index: 1000;
-    display: none; /* Initially hidden until refreshes are active */
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    transition: opacity 0.3s ease;
+    font-size: 0.9em;
+    opacity: 0.9;
 }
 
-/* Settings panel specific styles */
-.cache-refresher-setting-item {
-    margin-bottom: 8px;
+.cache-refresher-description p {
+    margin: 0;
 }
 
-/* Ensure proper spacing in the settings panel */
-.cache_refresher_settings .flex-container {
-    margin-bottom: 8px;
+.cache-refresher-row {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 12px;
+}
+
+.cache-refresher-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cache-refresher-row label span {
+    font-weight: 500;
+}
+
+.cache-refresher-row label small {
+    font-size: 0.8em;
+    opacity: 0.7;
+}
+
+.cache-refresher-row .checkbox_label {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.cache-refresher-row input[type="number"] {
+    width: 100px;
+    margin-top: 5px;
+}
+
+.cache-refresher-row button {
+    align-self: flex-start;
+    margin-top: 5px;
+}
+
+.cache-refresher-divider {
+    margin: 15px 0;
+    border: none;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+    opacity: 0.5;
+}
+
+.cache-refresher-info {
+    margin-top: 15px;
+    padding: 10px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 5px;
+    font-size: 0.85em;
+}
+
+.cache-refresher-info h4 {
+    margin: 10px 0 5px 0;
+    font-size: 1em;
+}
+
+.cache-refresher-info h4:first-child {
+    margin-top: 0;
+}
+
+.cache-refresher-info ul {
+    margin: 5px 0;
+    padding-left: 20px;
+}
+
+.cache-refresher-info li {
+    margin: 3px 0;
+}
+
+/* Floating Status Indicator */
+.cache-refresh-indicator {
+    position: fixed;
+    bottom: 80px;
+    right: 20px;
+    z-index: 9999;
+    background: var(--SmartThemeBodyColor);
+    border: 2px solid var(--SmartThemeBorderColor);
+    border-radius: 25px;
+    padding: 8px 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    display: flex;
+    align-items: center;
+    font-family: var(--mainFontFamily);
+    transition: all 0.3s ease;
+    cursor: default;
+    user-select: none;
+}
+
+.cache-refresh-indicator:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.cache-refresh-indicator-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cache-refresh-icon {
+    font-size: 1.2em;
+    animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.cache-refresh-timer {
+    font-size: 1.1em;
+    font-weight: bold;
+    font-family: 'Consolas', 'Monaco', monospace;
+    color: var(--SmartThemeQuoteColor);
+    min-width: 45px;
+    text-align: center;
+}
+
+.cache-refresh-count {
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+/* Hide indicator when not active */
+.cache-refresh-indicator[style*="display: none"] {
+    opacity: 0;
+    transform: translateY(20px);
+    pointer-events: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .cache-refresh-indicator {
+        bottom: 120px;
+        right: 10px;
+        padding: 6px 12px;
+        font-size: 0.9em;
+    }
+    
+    .cache-refresher-row input[type="number"] {
+        width: 80px;
+    }
+}
+
+/* Dark/Light theme compatibility */
+.cache-refresh-indicator {
+    background-color: var(--SmartThemeBodyColor, #1a1a1a);
+    color: var(--SmartThemeEmColor, #ffffff);
+}
+
+/* Animation for successful refresh */
+@keyframes pulse {
+    0% {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 20px rgba(76, 175, 80, 0.6);
+    }
+    100% {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+}
+
+.cache-refresh-indicator.refreshing {
+    animation: pulse 0.5s ease;
+}
+
+/* Loading state for stop button */
+#cache_refresh_stop:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#cache_refresh_stop i {
+    margin-right: 5px;
 }
