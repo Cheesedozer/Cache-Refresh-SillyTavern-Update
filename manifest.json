@@ -1,13 +1,13 @@
 {
-    "display_name": "Cache Refresher",
+    "display_name": "Cache Refresher & Monitor",
     "loading_order": 100,
     "requires": [],
     "optional": [],
     "dependencies": [],
     "js": "index.js",
     "css": "styles.css",
-    "author": "OneinfinityN7",
-    "version": "2.0.0",
+    "author": "OneinfinityN7, zwheeler (Cache Monitor)",
+    "version": "2.1.0",
     "homePage": "https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern",
     "auto_update": true,
     "minimum_client_version": "1.15.0"
