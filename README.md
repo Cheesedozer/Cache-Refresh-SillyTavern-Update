@@ -37,7 +37,7 @@ Real-time monitoring of your Claude API prompt caching performance with detailed
 1. Open SillyTavern
 2. Go to **Extensions** (puzzle piece icon)
 3. Click **Install Extension** (top right)
-4. Enter: `https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern`
+4. Enter: `https://github.com/Cheesedozer/Cache-Refresh-SillyTavern-Update`
 5. Restart SillyTavern
 
 ### Method 2: Manual Installation
@@ -48,7 +48,7 @@ Real-time monitoring of your Claude API prompt caching performance with detailed
    ```
 2. Clone or download this repository:
    ```bash
-   git clone https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern
+   git clone https://github.com/Cheesedozer/Cache-Refresh-SillyTavern-Update
    ```
 3. Restart SillyTavern
 
@@ -185,7 +185,7 @@ AGPL-3.0 License - See [LICENSE](LICENSE) file
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern/issues)
+- **Issues**: [GitHub Issues](https://github.com/Cheesedozer/Cache-Refresh-SillyTavern-Update/issues)
 - **SillyTavern Discord**: Join the community for support
 - **Claude Caching Guide**: [Anthropic Documentation](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 
