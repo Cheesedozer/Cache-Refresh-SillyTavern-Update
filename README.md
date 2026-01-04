@@ -1,187 +1,194 @@
-# SillyTavern Automatic Cache Refreshing Extension
+# Cache Refresher & Monitor for SillyTavern
 
-[![Status](https://img.shields.io/badge/status-ready-green.svg)](https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern)
-[![SillyTavern](https://img.shields.io/badge/SillyTavern-1.15.0+-blue.svg)](https://github.com/SillyTavern/SillyTavern)
+A comprehensive extension for SillyTavern that helps you maximize Claude API prompt caching efficiency and save money.
 
-This extension for [SillyTavern](https://github.com/SillyTavern/SillyTavern) automatically keeps your language model's cache "warm" by sending periodic, minimal requests. While designed primarily for Claude Sonnet, it works with other models as well. By preventing cache expiration, you can significantly reduce API costs.
+## Features
 
-## Version 2.0.0 - SillyTavern 1.15.0 Compatibility Update
+### 🔄 Cache Refresher
+Automatically keeps your LLM cache "warm" by sending periodic minimal requests, preventing expensive cache misses when you pause between messages.
 
-This version has been updated for full compatibility with SillyTavern 1.15.0+, including:
+- **Automatic Cache Refresh**: Sends periodic "ping" requests to keep cache alive
+- **Configurable Intervals**: Set refresh timing from 30 to 600 seconds
+- **Refresh Limits**: Control maximum refreshes per message
+- **Visual Countdown**: Floating timer shows next refresh
+- **Smart Detection**: Automatically stops when chat changes
 
-- ✅ Migrated to stable `SillyTavern.getContext()` API
-- ✅ Updated event handling for the new event system
-- ✅ Compatible with Macros 2.0
-- ✅ Compatible with unified group chat metadata format
-- ✅ Improved error handling and cleanup
-- ✅ Better support for the refactored Chat Completion API
+### 📊 Cache Monitor
+Real-time monitoring of your Claude API prompt caching performance with detailed statistics.
 
-## The Problem: Cache Expiration
+> *Cache Monitor feature inspired by [zwheeler/SillyTavern-CacheMonitor](https://github.com/zwheeler/SillyTavern-CacheMonitor)*
 
-AI language models (LLMs) like Claude (through OpenRouter), OpenAI's GPT, and others use caching to improve performance and reduce costs. When you send a prompt that's similar to a recent one, or enable caching on your prompts, the service can often return a cached response instead of recomputing everything, resulting in a cache discount (90% reduction of the cached input price for Claude).
+- **Hit Rate Tracking**: See how often your prompts hit the cache
+- **Token Statistics**: Track cached vs uncached tokens
+- **Cost Savings Calculator**: Estimate how much money caching saves
+- **Model Presets**: Pre-configured pricing for Claude 4.5 models
+- **Floating Widget**: Minimizable real-time statistics display
 
-However, these caches typically have a short lifespan (often just a few minutes). If you pause your interaction with the model longer than the cache timeout, the cache expires, and your next request incurs the full cost.
+## Requirements
 
-## The Solution: Automatic Cache Refreshing
-
-- When you send a message and receive a response, the extension captures the prompt data.
-- It then schedules a series of refresh requests (up to the maximum number configured).
-- If a new message is sent, the refresh timer will stop and then restart after the new response is received.
-- Each refresh request sends a minimal request to the API to just keep the cache alive.
-- A floating status indicator shows the number of remaining refreshes and a countdown timer.
-- Notifications appear after each successful refresh.
-- If you change or leave the conversation, the timer will stop.
+- **SillyTavern**: Version 1.15.0 or later
+- **API**: Claude via Anthropic direct, OpenRouter, or compatible endpoints
+- **Mode**: Chat Completion (caching not available for Text Completion)
 
 ## Installation
 
-### Prerequisites
-- SillyTavern 1.15.0 or later installed and running
-- Chat Completion mode configured (Claude, OpenRouter, etc.)
+### Method 1: Via SillyTavern Extension Installer (Recommended)
 
-### Method 1: Via Extension Installer (Recommended)
-
-1. In SillyTavern, go to the **Extensions** menu (puzzle piece icon)
-2. Click the **Install extension** button (top right)
-3. Enter: `https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern`
-4. Click **Install**
+1. Open SillyTavern
+2. Go to **Extensions** (puzzle piece icon)
+3. Click **Install Extension** (top right)
+4. Enter: `https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern`
 5. Restart SillyTavern
 
 ### Method 2: Manual Installation
 
-1. Navigate to your SillyTavern extensions folder:
-   - For user-specific: `data/<your-user>/extensions/`
-   - For all users: `public/scripts/extensions/third-party/`
-
+1. Navigate to your SillyTavern installation:
+   ```
+   SillyTavern/data/<user>/extensions/third-party/
+   ```
 2. Clone or download this repository:
    ```bash
-   cd data/<your-user>/extensions/
-   git clone https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern.git
+   git clone https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern
    ```
-
 3. Restart SillyTavern
 
 ## Configuration
 
-After installation, find the **Cache Refresher** panel in the Extensions menu.
+### SillyTavern Cache Settings (config.yaml)
 
-### Settings
+For caching to work, configure these settings in your `config.yaml`:
+
+```yaml
+claude:
+  # Enable system prompt caching (use only with static prompts)
+  enableSystemPromptCache: true
+  
+  # Cache at message depth (2 = previous exchange, recommended)
+  cachingAtDepth: 2
+  
+  # Extended TTL (optional, costs more but lasts 1 hour)
+  extendedTTL: false
+```
+
+**⚠️ Important**: After modifying config.yaml, restart SillyTavern.
+
+### Extension Settings
+
+Access settings via **Extensions** → **Cache Refresher & Monitor**
+
+#### Cache Refresher Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Enable Cache Refresh | On | Toggle the extension on/off |
-| Refresh Interval | 240 seconds | Time between cache refresh requests |
-| Max Refreshes | 5 | Maximum refresh requests per message |
-| Show Notifications | On | Display toastr notifications on refresh |
-| Show Status Indicator | On | Show floating countdown indicator |
-| Debug Mode | Off | Enable detailed console logging |
+| Enable Cache Refresher | On | Toggle automatic cache refresh |
+| Refresh Interval | 240s | Time between refresh requests |
+| Maximum Refreshes | 5 | Limit per message |
+| Show Notifications | On | Toast notifications on refresh |
+| Show Countdown Timer | On | Floating timer display |
 
-### Recommended Settings for Claude
+#### Cache Monitor Settings
 
-| Model | Interval | Max Refreshes |
-|-------|----------|---------------|
-| Claude 3.5 Sonnet | 240s (4 min) | 5-10 |
-| Claude 3 Opus | 240s (4 min) | 5-10 |
-| Claude 3 Haiku | 240s (4 min) | 10-15 |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Enable Cache Monitor | On | Toggle cache monitoring |
+| Show Floating Widget | On | Display stats widget |
+| Track Cost Savings | On | Calculate estimated savings |
+| Widget Position | Bottom Left | Where to show the widget |
+| Pricing Model | Sonnet 4.5 | Model for cost calculations |
 
-Claude's cache expires after 5 minutes, so a 4-minute interval provides a safe margin.
+## Recommended Settings by Model
 
-## Troubleshooting
+### Claude Sonnet 4.5 / Opus 4.5
+- **Refresh Interval**: 240 seconds (4 minutes)
+- **Max Refreshes**: 5-10
+- **Caching TTL**: 5 minutes (default) or 1 hour
 
-### Extension Not Appearing
-1. Ensure SillyTavern is version 1.15.0 or later
-2. Check that the extension is in the correct folder
-3. Restart SillyTavern completely
-4. Check the browser console (F12) for error messages
+### Claude Haiku 4.5
+- **Refresh Interval**: 240 seconds
+- **Max Refreshes**: 10-15 (lower cost per refresh)
 
-### No Cache Reduction
-1. Verify your model supports caching
-2. Check your `config.yaml` for caching settings:
-   ```yaml
-   claude:
-     enableSystemPromptCache: true
-     cachingAtDepth: 2
-   ```
-3. Ensure you're using **Chat Completion** mode
-4. For OpenRouter: system prompt caching is always enabled
+## Understanding Cache Statistics
 
-### Timer Not Starting
-1. Make sure the extension is enabled
-2. Send a message and wait for a response
-3. The timer should start automatically after the response
-4. Check the console for debug messages (enable Debug Mode)
+### Hit Rate
+- **Excellent (70%+)**: Caching is working great! 🟢
+- **Moderate (40-70%)**: Some cache misses, review your setup 🟡
+- **Poor (<40%)**: Most prompts miss cache, troubleshoot needed 🔴
 
-### Cache Still Expiring
-1. Decrease the refresh interval (try 180 seconds)
-2. Increase max refreshes
-3. Check the browser console for errors
-4. Verify API connectivity
-
-## API Compatibility
-
-| Provider | Compatible | Notes |
-|----------|------------|-------|
-| OpenRouter Claude | ✅ Yes | Recommended |
-| Claude Direct API | ✅ Yes | Requires config.yaml setup |
-| OpenAI GPT | ⚠️ Partial | May not significantly reduce costs |
-| Anthropic Direct | ✅ Yes | Requires caching enabled |
+### What Causes Cache Misses?
+- Cache expired (>5 minutes idle without refresh)
+- System prompt changed (random macros, lorebooks)
+- Message history truncated by context limit
+- Different model or endpoint used
 
 ## Cost Savings Example
 
-### Claude Sonnet 3.7 with 76-message conversation:
+**Scenario**: 50,000 token conversation with Claude Sonnet 4.5
 
-| Caching Method | Prompt Tokens Cost | Completion Cost | Total | Savings |
-|----------------|-------------------|-----------------|-------|---------|
-| No caching | $0.04323 | $0.00447 | $0.0477 | 0% |
-| Depth 2 + System | $0.00653 | $0.00447 | $0.011 | 77% |
-| Cache refresh | $0.00541 | $0.00003 | $0.00544 | **89%** |
+| Without Caching | With Caching (80% hit rate) |
+|-----------------|------------------------------|
+| $0.15 per message | $0.0345 per message |
+| 50 messages = $7.50 | 50 messages = $1.73 |
+| | **Savings: $5.77 (77%)** |
 
-## Changelog
+## Troubleshooting
 
-### v2.0.0 (2025-01-04)
-- 🔄 Migrated to `SillyTavern.getContext()` API for stability
-- 🎯 Updated event handling for SillyTavern 1.15.0
-- 🛡️ Added `minimum_client_version` to manifest
-- 🐛 Improved error handling and cleanup
-- 📝 Added Debug Mode setting
-- 🎨 Updated UI styling for better theme compatibility
+### Extension Not Loading
+- Verify SillyTavern version is 1.15.0+
+- Check browser console (F12) for errors
+- Ensure files are in correct directory
 
-### v1.x.x
-- Initial release
-- Basic cache refresh functionality
+### Cache Not Working
+- Confirm you're using Chat Completion mode
+- Check config.yaml has caching enabled
+- Avoid `{{random}}` macros in system prompts
+- Verify model supports caching (Claude 3.5+, 4.x)
 
-## Development
+### Monitor Shows No Data
+- Enable Cache Monitor in settings
+- Generate some messages to collect data
+- Check debug mode for detailed logs
 
-### Building from Source
+### High Cache Miss Rate
+- Reduce system prompt variability
+- Check if context is being truncated
+- Ensure cachingAtDepth is set properly
+- Verify refresh timer is running
 
-This extension doesn't require a build step. Simply edit the JavaScript, HTML, and CSS files directly.
+## Version History
 
-### Testing
+### v2.1.0 (Latest)
+- Added Cache Monitor feature
+- Real-time cache hit/miss tracking
+- Cost savings calculator
+- Model pricing presets
+- Minimizable floating widget
+- Credit: Cache Monitor inspired by zwheeler/SillyTavern-CacheMonitor
 
-1. Enable Debug Mode in settings
-2. Open browser console (F12)
-3. Look for `[CacheRefresher]` prefixed messages
-4. Send a message and verify timer starts
-5. Wait for refresh and check for success message
+### v2.0.0
+- Migrated to SillyTavern 1.15.0 stable APIs
+- Updated event handling system
+- Improved group chat support
+- Enhanced error handling
 
-### Contributing
-
-Pull requests are welcome! Please ensure:
-- Code follows existing style
-- Changes are tested with SillyTavern 1.15.0+
-- Update the README if adding features
-
-## License
-
-This extension is released under the [GNU AGPL License](LICENSE).
+### v1.x
+- Initial release for older SillyTavern versions
 
 ## Credits
 
-- Original development by OneinfinityN7
-- v2.0.0 compatibility update for SillyTavern 1.15.0
-- Built for the SillyTavern community
-- Built with Claude
+- **OneinfinityN7** - Cache Refresher development
+- **zwheeler** - Cache Monitor concept ([SillyTavern-CacheMonitor](https://github.com/zwheeler/SillyTavern-CacheMonitor))
+- **SillyTavern Team** - Platform and extension system
+
+## License
+
+AGPL-3.0 License - See [LICENSE](LICENSE) file
 
 ## Support
 
-- [GitHub Issues](https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern/issues)
-- [SillyTavern Discord](https://discord.gg/sillytavern)
+- **Issues**: [GitHub Issues](https://github.com/OneinfinityN7/Cache-Refresh-SillyTavern/issues)
+- **SillyTavern Discord**: Join the community for support
+- **Claude Caching Guide**: [Anthropic Documentation](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+
+---
+
+*Making Claude caching actually work for everyone* 💰
