@@ -1,77 +1,114 @@
-<!-- 
-  Cache Refresher Settings Panel
-  This template is loaded into the SillyTavern extensions settings panel
--->
-<div class="cache_refresher_settings">
+<div class="cache-refresher-settings">
     <div class="inline-drawer">
-        <!-- Header/Toggle for the settings panel -->
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b data-i18n="Cache Refresher">Cache Refresher</b>
+            <b>Cache Refresher</b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
-
-        <!-- Settings panel content -->
         <div class="inline-drawer-content">
-            <!-- Main toggle switches -->
-            <div class="flex-container">
-                <input type="checkbox" id="cache_refresher_enabled">
-                <span data-i18n="Enable Cache Refresher">Enable Cache Refresher</span>
-            </div>
-            
-            <div class="flex-container" title="Show notifications when cache is refreshed">
-                <input type="checkbox" id="cache_refresher_show_notifications" checked>
-                <span data-i18n="Show Notifications">Show Notifications</span>
-            </div>
-            
-            <div class="flex-container" title="Show floating status indicator with refresh countdown">
-                <input type="checkbox" id="cache_refresher_show_status_indicator" checked>
-                <span data-i18n="Show Status Indicator">Show Status Indicator</span>
-            </div>
-            
-            <div class="flex-container" title="Disable max tokens feature if your provider has issues with this. Will waste all your money on a responce. (responce can be seen in the cmd)">
-                <input type="checkbox" id="cache_refresher_disable_max_tokens">
-                <span data-i18n="Disable Max Tokens Feature (Not recommended)">Disable Max Tokens Feature (Not recommended)</span>
-            </div>
-
-            <hr>
-
-            <!-- Numeric settings -->
-            <div class="flex-container flexFlowColumn" title="Maximum number of cache refreshes to perform">
-                <label for="cache_refresher_max_refreshes" data-i18n="Maximum Refreshes">
-                    Maximum Refreshes
-                </label>
-                <div class="flex-container">
-                    <input id="cache_refresher_max_refreshes" class="text_pole flex1 wide100p" type="number" min="1" max="1000" value="3">
+            <div class="cache-refresher-block">
+                <div class="cache-refresher-description">
+                    <p>
+                        Automatically keeps your LLM's cache warm by sending periodic minimal requests.
+                        This prevents cache expiration and reduces API costs, especially for Claude models.
+                    </p>
                 </div>
-                
-                <!-- Refresh interval setting -->
-                <div class="cache-refresher-setting-item">
-                    <label for="cache_refresher_interval" title="Interval between cache refreshes in minutes">
-                        <span>Refresh Interval (minutes)</span>
-                        <input type="number" id="cache_refresher_interval" name="cache_refresher_interval" min="0.1" max="1000" step="0.1" class="text_pole textarea_compact">
+
+                <!-- Enable Toggle -->
+                <div class="cache-refresher-row">
+                    <label class="checkbox_label" for="cache_refresh_enabled">
+                        <input type="checkbox" id="cache_refresh_enabled" />
+                        <span>Enable Cache Refresh</span>
                     </label>
                 </div>
-                
-                <!-- Maximum tokens setting -->
-                <div class="cache-refresher-setting-item">
-                    <label for="cache_refresher_max_tokens" title="Maximum tokens to request for cache refresh">
-                        <span>Maximum Tokens</span>
-                        <input type="number" id="cache_refresher_max_tokens" name="cache_refresher_max_tokens" min="-4096" max="4096" class="text_pole textarea_compact">
+
+                <!-- Refresh Interval -->
+                <div class="cache-refresher-row">
+                    <label for="cache_refresh_interval">
+                        <span>Refresh Interval (seconds)</span>
+                        <small>Time between cache refresh requests (30-600)</small>
+                    </label>
+                    <input 
+                        type="number" 
+                        id="cache_refresh_interval" 
+                        min="30" 
+                        max="600" 
+                        step="10"
+                        class="text_pole" 
+                    />
+                </div>
+
+                <!-- Max Refreshes -->
+                <div class="cache-refresher-row">
+                    <label for="cache_refresh_max">
+                        <span>Max Refreshes per Message</span>
+                        <small>Maximum refresh requests after each message (1-20)</small>
+                    </label>
+                    <input 
+                        type="number" 
+                        id="cache_refresh_max" 
+                        min="1" 
+                        max="20" 
+                        step="1"
+                        class="text_pole" 
+                    />
+                </div>
+
+                <hr class="cache-refresher-divider" />
+
+                <!-- UI Options -->
+                <div class="cache-refresher-row">
+                    <label class="checkbox_label" for="cache_refresh_notifications">
+                        <input type="checkbox" id="cache_refresh_notifications" />
+                        <span>Show Notifications</span>
                     </label>
                 </div>
-            </div>
-            <hr>
 
-            <!-- Status display -->
-            <div class="flex-container flexFlowColumn">
-                <div class="flex-container">
-                    <span>Status: </span>
-                    <span id="cache_refresher_status_text">Inactive</span>
+                <div class="cache-refresher-row">
+                    <label class="checkbox_label" for="cache_refresh_status">
+                        <input type="checkbox" id="cache_refresh_status" />
+                        <span>Show Status Indicator</span>
+                    </label>
+                </div>
+
+                <div class="cache-refresher-row">
+                    <label class="checkbox_label" for="cache_refresh_debug">
+                        <input type="checkbox" id="cache_refresh_debug" />
+                        <span>Debug Mode</span>
+                    </label>
+                </div>
+
+                <hr class="cache-refresher-divider" />
+
+                <!-- Manual Control -->
+                <div class="cache-refresher-row">
+                    <button id="cache_refresh_stop" class="menu_button">
+                        <i class="fa-solid fa-stop"></i>
+                        <span>Stop Timer</span>
+                    </button>
+                </div>
+
+                <!-- Info Section -->
+                <div class="cache-refresher-info">
+                    <h4>How it works:</h4>
+                    <ul>
+                        <li>After you receive an AI response, the extension starts a countdown timer.</li>
+                        <li>When the timer expires, it sends a minimal request to keep the cache alive.</li>
+                        <li>This continues until the maximum refresh count is reached.</li>
+                        <li>Changing or leaving the conversation stops the timer.</li>
+                    </ul>
+                    <h4>Recommended Settings for Claude:</h4>
+                    <ul>
+                        <li><strong>Interval:</strong> 240 seconds (4 minutes) - Cache expires at 5 minutes</li>
+                        <li><strong>Max Refreshes:</strong> 5-10 depending on your break duration</li>
+                    </ul>
+                    <h4>Requirements:</h4>
+                    <ul>
+                        <li>Chat Completion mode enabled</li>
+                        <li>Claude caching settings configured in config.yaml</li>
+                        <li>For OpenRouter: system prompt caching is always enabled</li>
+                    </ul>
                 </div>
             </div>
-            
-            <!-- Add bottom margin for spacing -->
-            <div style="margin-bottom: 8px;"></div>
         </div>
     </div>
 </div>
