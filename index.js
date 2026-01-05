@@ -1,34 +1,85 @@
 /**
- * Cache Refresher Extension for SillyTavern
- * Automatically keeps LLM cache warm by sending periodic minimal requests.
+ * Cache Refresher & Monitor Extension for SillyTavern
  *
- * Version: 2.0.0
+ * Cache Refresher: Automatically keeps LLM cache warm by sending periodic minimal requests.
+ * Cache Monitor: Tracks Claude API prompt caching performance in real-time.
+ *
+ * Version: 2.1.0
  * Compatible with: SillyTavern 1.15.0+
  * Author: OneinfinityN7
+ * Cache Monitor inspired by: zwheeler/SillyTavern-CacheMonitor
  * License: AGPL-3.0
- *
- * Changelog v2.0.0:
- * - Migrated to SillyTavern.getContext() API for stability
- * - Updated event handling for v1.15.0 compatibility
- * - Improved error handling and cleanup
- * - Added support for new Chat Completion API patterns
  */
 
 // Module identifier - must be unique
 const MODULE_NAME = 'cache_refresher';
 const LOG_PREFIX = '[CacheRefresher]';
 
+// Claude model pricing (per million tokens)
+const PRICING_MODELS = {
+    'claude-sonnet-4.5': {
+        name: 'Claude Sonnet 4.5',
+        input: 3.00,
+        output: 15.00,
+        cacheWrite: 3.75,  // 25% more than input
+        cacheRead: 0.30    // 90% less than input
+    },
+    'claude-opus-4.5': {
+        name: 'Claude Opus 4.5',
+        input: 15.00,
+        output: 75.00,
+        cacheWrite: 18.75,
+        cacheRead: 1.50
+    },
+    'claude-haiku-4.5': {
+        name: 'Claude Haiku 4.5',
+        input: 0.80,
+        output: 4.00,
+        cacheWrite: 1.00,
+        cacheRead: 0.08
+    },
+    'claude-sonnet-4': {
+        name: 'Claude Sonnet 4',
+        input: 3.00,
+        output: 15.00,
+        cacheWrite: 3.75,
+        cacheRead: 0.30
+    },
+    'claude-opus-4': {
+        name: 'Claude Opus 4',
+        input: 15.00,
+        output: 75.00,
+        cacheWrite: 18.75,
+        cacheRead: 1.50
+    },
+    'custom': {
+        name: 'Custom',
+        input: 3.00,
+        output: 15.00,
+        cacheWrite: 3.75,
+        cacheRead: 0.30
+    }
+};
+
 // Default settings
 const defaultSettings = Object.freeze({
+    // Cache Refresher settings
     enabled: true,
     interval: 240000, // 4 minutes (240 seconds) in milliseconds
     maxRefreshes: 5,
     showNotifications: true,
     showStatusIndicator: true,
-    debug: false
+    debug: false,
+    // Cache Monitor settings
+    monitorEnabled: true,
+    showWidget: true,
+    trackCost: true,
+    widgetPosition: 'bottom-left',
+    pricingModel: 'claude-sonnet-4.5',
+    widgetMinimized: false
 });
 
-// State variables
+// State variables - Cache Refresher
 let refreshTimer = null;
 let refreshCount = 0;
 let lastPromptData = null;
@@ -38,9 +89,25 @@ let countdownInterval = null;
 let secondsRemaining = 0;
 let eventListenersRegistered = false;
 
+// State variables - Cache Monitor
+let monitorWidget = null;
+let originalFetch = null;
+let cacheStats = {
+    totalRequests: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    estimatedSavings: 0,
+    lastRequestHit: null,
+    lastCacheReadTokens: 0,
+    lastCacheWriteTokens: 0
+};
+
 /**
  * Gets the current extension settings, initializing with defaults if needed.
- * Uses the stable SillyTavern.getContext() API.
  * @returns {Object} Current settings
  */
 function getSettings() {
@@ -70,7 +137,6 @@ function saveSettings() {
 
 /**
  * Logs a debug message if debug mode is enabled
- * @param  {...any} args - Arguments to log
  */
 function debugLog(...args) {
     if (getSettings().debug) {
@@ -80,7 +146,6 @@ function debugLog(...args) {
 
 /**
  * Logs an info message
- * @param  {...any} args - Arguments to log
  */
 function log(...args) {
     console.log(LOG_PREFIX, ...args);
@@ -88,7 +153,6 @@ function log(...args) {
 
 /**
  * Logs an error message
- * @param  {...any} args - Arguments to log
  */
 function logError(...args) {
     console.error(LOG_PREFIX, ...args);
@@ -96,14 +160,11 @@ function logError(...args) {
 
 /**
  * Shows a notification to the user if notifications are enabled
- * @param {string} message - The message to display
- * @param {string} type - The notification type ('success', 'error', 'warning', 'info')
  */
 function showNotification(message, type = 'info') {
     const settings = getSettings();
     if (!settings.showNotifications) return;
 
-    // Use toastr if available (SillyTavern uses this)
     if (typeof toastr !== 'undefined') {
         switch (type) {
             case 'success':
@@ -121,8 +182,12 @@ function showNotification(message, type = 'info') {
     }
 }
 
+// ============================================================================
+// Cache Refresher Functions
+// ============================================================================
+
 /**
- * Creates or updates the floating status indicator
+ * Creates or updates the floating status indicator for cache refresh
  */
 function updateStatusIndicator() {
     const settings = getSettings();
@@ -198,22 +263,17 @@ function stopCountdown() {
 
 /**
  * Gets the current chat's unique identifier
- * Works with both regular chats and group chats (v1.15.0 unified format)
- * @returns {string|null} The current chat identifier
  */
 function getCurrentChatId() {
     const context = SillyTavern.getContext();
 
-    // Handle group chats
     if (context.selected_group) {
         return `group-${context.selected_group}`;
     }
 
-    // Handle regular chats
     if (context.characterId !== undefined && context.characterId !== null) {
         const character = context.characters?.[context.characterId];
         if (character) {
-            // Use chat file name if available, otherwise use character name
             return context.chat_metadata?.file_name || character.name || `char-${context.characterId}`;
         }
     }
@@ -223,8 +283,6 @@ function getCurrentChatId() {
 
 /**
  * Captures the prompt data after a successful generation
- * This is called when GENERATION_ENDED event fires
- * @param {Object} data - Event data from generation
  */
 function capturePromptData(data) {
     const context = SillyTavern.getContext();
@@ -236,35 +294,28 @@ function capturePromptData(data) {
     }
 
     try {
-        // Get the current chat messages
         const chat = context.chat;
         if (!chat || chat.length === 0) {
             debugLog('No chat messages available');
             return;
         }
 
-        // Store the current chat ID
         const newChatId = getCurrentChatId();
 
-        // If chat changed, reset the counter
         if (newChatId !== currentChatId) {
             debugLog('Chat changed, resetting refresh counter');
             refreshCount = 0;
             currentChatId = newChatId;
         }
 
-        // Capture essential prompt data for cache refresh
         lastPromptData = {
             chatId: newChatId,
             messageCount: chat.length,
             timestamp: Date.now(),
-            // Store last few message IDs for verification
             lastMessageIds: chat.slice(-3).map((m, i) => m.id || `msg-${chat.length - 3 + i}`)
         };
 
         debugLog('Captured prompt data:', lastPromptData);
-
-        // Start the refresh timer
         startRefreshTimer();
 
     } catch (error) {
@@ -289,7 +340,6 @@ async function sendCacheRefresh() {
         return;
     }
 
-    // Check if we've exceeded max refreshes
     if (refreshCount >= settings.maxRefreshes) {
         debugLog('Max refreshes reached');
         showNotification('Cache refresh limit reached', 'info');
@@ -297,7 +347,6 @@ async function sendCacheRefresh() {
         return;
     }
 
-    // Verify we're still in the same chat
     const currentId = getCurrentChatId();
     if (currentId !== lastPromptData.chatId) {
         debugLog('Chat changed, stopping refresh');
@@ -308,34 +357,29 @@ async function sendCacheRefresh() {
     try {
         debugLog('Sending cache refresh request...');
 
-        // Use the stable generateQuietPrompt API from SillyTavern 1.15.0
         const { generateQuietPrompt } = SillyTavern.getContext();
 
         if (typeof generateQuietPrompt === 'function') {
-            // Send minimal request to refresh cache
             await generateQuietPrompt({
-                quietPrompt: '', // Empty/minimal prompt
-                skipWIAN: true,  // Skip World Info and Author's Note
-                maxTokens: 1,    // Request minimal response
+                quietPrompt: '',
+                skipWIAN: true,
+                maxTokens: 1,
                 skipSanitize: true
             });
         } else {
-            // Fallback: Try alternative method for older versions
-            await sendDirectRefreshRequest();
+            throw new Error('generateQuietPrompt not available');
         }
 
         refreshCount++;
         log(`Cache refresh ${refreshCount}/${settings.maxRefreshes} successful`);
         showNotification(`Cache refreshed (${refreshCount}/${settings.maxRefreshes})`, 'success');
 
-        // Schedule next refresh
         startRefreshTimer();
 
     } catch (error) {
         logError('Cache refresh failed:', error);
         showNotification('Cache refresh failed', 'error');
 
-        // Retry with exponential backoff
         setTimeout(() => {
             if (getSettings().enabled) {
                 startRefreshTimer();
@@ -345,42 +389,11 @@ async function sendCacheRefresh() {
 }
 
 /**
- * Fallback method to send a direct refresh request
- * Used if generateQuietPrompt is not available
- */
-async function sendDirectRefreshRequest() {
-    const context = SillyTavern.getContext();
-
-    // Get the API settings
-    const { oai_settings, main_api } = context;
-
-    if (main_api !== 'openai') {
-        throw new Error('Direct refresh only supported for Chat Completion API');
-    }
-
-    // Build minimal request
-    const messages = [
-        {
-            role: 'user',
-            content: ' '
-        }
-    ];
-
-    // This would need to be adapted based on the actual API endpoint
-    // The exact implementation depends on SillyTavern's internal API structure
-    debugLog('Using fallback direct refresh method');
-
-    // For now, throw to indicate generateQuietPrompt should be used
-    throw new Error('Fallback method not implemented - please update SillyTavern');
-}
-
-/**
  * Starts the refresh timer
  */
 function startRefreshTimer() {
     const settings = getSettings();
 
-    // Clear any existing timer
     stopRefreshTimer();
 
     if (!settings.enabled) {
@@ -394,10 +407,8 @@ function startRefreshTimer() {
 
     debugLog(`Starting refresh timer: ${settings.interval}ms`);
 
-    // Start countdown display
     startCountdown();
 
-    // Set the timer
     refreshTimer = setTimeout(() => {
         sendCacheRefresh();
     }, settings.interval);
@@ -419,19 +430,381 @@ function stopRefreshTimer() {
 }
 
 /**
- * Resets all state
+ * Resets all cache refresher state
  */
-function resetState() {
+function resetRefresherState() {
     stopRefreshTimer();
     refreshCount = 0;
     lastPromptData = null;
     currentChatId = null;
 }
 
+// ============================================================================
+// Cache Monitor Functions
+// ============================================================================
+
 /**
- * Handler for when chat changes
- * @param {string} chatId - The new chat ID (if provided)
+ * Creates the floating cache monitor widget
  */
+function createMonitorWidget() {
+    const settings = getSettings();
+
+    if (monitorWidget) {
+        monitorWidget.remove();
+    }
+
+    monitorWidget = document.createElement('div');
+    monitorWidget.id = 'cache-monitor-widget';
+    monitorWidget.className = `cache-monitor-widget cache-monitor-${settings.widgetPosition}`;
+
+    updateWidgetContent();
+
+    document.body.appendChild(monitorWidget);
+
+    // Add click handler for minimize/expand
+    const header = monitorWidget.querySelector('.cache-monitor-header');
+    if (header) {
+        header.addEventListener('click', toggleWidgetMinimized);
+    }
+
+    updateWidgetVisibility();
+}
+
+/**
+ * Updates the widget content with current stats
+ */
+function updateWidgetContent() {
+    if (!monitorWidget) return;
+
+    const settings = getSettings();
+    const hitRate = cacheStats.totalRequests > 0
+        ? Math.round((cacheStats.cacheHits / cacheStats.totalRequests) * 100)
+        : 0;
+
+    const hitRateClass = hitRate >= 70 ? 'status-good' : hitRate >= 40 ? 'status-warning' : 'status-poor';
+
+    const lastStatusClass = cacheStats.lastRequestHit === true ? 'hit' : cacheStats.lastRequestHit === false ? 'miss' : '';
+    const lastStatusText = cacheStats.lastRequestHit === true ? 'HIT' : cacheStats.lastRequestHit === false ? 'MISS' : '-';
+
+    const formatTokens = (tokens) => {
+        if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
+        if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
+        return tokens.toString();
+    };
+
+    const isMinimized = settings.widgetMinimized;
+
+    monitorWidget.innerHTML = `
+        <div class="cache-monitor-header ${isMinimized ? 'minimized' : ''}">
+            <span class="cache-monitor-title">📊 Cache Monitor</span>
+            ${isMinimized ? `<span class="cache-monitor-mini-stat ${hitRateClass}">${hitRate}%</span>` : ''}
+            <span class="cache-monitor-toggle">${isMinimized ? '▲' : '▼'}</span>
+        </div>
+        ${!isMinimized ? `
+        <div class="cache-monitor-body">
+            <div class="cache-monitor-last-request">
+                <span class="last-status ${lastStatusClass}">${lastStatusText}</span>
+                <span class="last-tokens">${formatTokens(cacheStats.lastCacheReadTokens)} read</span>
+            </div>
+            <div class="cache-monitor-stats">
+                <div class="cache-monitor-stat main-stat">
+                    <span class="stat-label">Hit Rate</span>
+                    <span class="stat-value ${hitRateClass}">${hitRate}%</span>
+                    <span class="stat-sublabel">${cacheStats.cacheHits}/${cacheStats.totalRequests} requests</span>
+                </div>
+                <div class="cache-monitor-stat-row">
+                    <div class="cache-monitor-stat small">
+                        <span class="stat-label">Cache Read</span>
+                        <span class="stat-value">${formatTokens(cacheStats.cacheReadTokens)}</span>
+                    </div>
+                    <div class="cache-monitor-stat small">
+                        <span class="stat-label">Cache Write</span>
+                        <span class="stat-value">${formatTokens(cacheStats.cacheWriteTokens)}</span>
+                    </div>
+                </div>
+                ${settings.trackCost ? `
+                <div class="cache-monitor-stat-row cost-row">
+                    <div class="cache-monitor-stat small savings">
+                        <span class="stat-label">Est. Savings</span>
+                        <span class="stat-value">$${cacheStats.estimatedSavings.toFixed(4)}</span>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        </div>
+        ` : ''}
+    `;
+
+    // Re-attach header click handler
+    const header = monitorWidget.querySelector('.cache-monitor-header');
+    if (header) {
+        header.addEventListener('click', toggleWidgetMinimized);
+    }
+}
+
+/**
+ * Toggles the widget minimized state
+ */
+function toggleWidgetMinimized() {
+    const settings = getSettings();
+    settings.widgetMinimized = !settings.widgetMinimized;
+    saveSettings();
+    updateWidgetContent();
+}
+
+/**
+ * Updates the widget visibility based on settings
+ */
+function updateWidgetVisibility() {
+    if (!monitorWidget) return;
+
+    const settings = getSettings();
+
+    if (settings.monitorEnabled && settings.showWidget) {
+        monitorWidget.style.display = 'block';
+    } else {
+        monitorWidget.style.display = 'none';
+    }
+}
+
+/**
+ * Updates the widget position
+ */
+function updateWidgetPosition() {
+    if (!monitorWidget) return;
+
+    const settings = getSettings();
+
+    // Remove all position classes
+    monitorWidget.classList.remove(
+        'cache-monitor-bottom-left',
+        'cache-monitor-bottom-right',
+        'cache-monitor-top-left',
+        'cache-monitor-top-right'
+    );
+
+    // Add the current position class
+    monitorWidget.classList.add(`cache-monitor-${settings.widgetPosition}`);
+}
+
+/**
+ * Calculates cost savings based on cache usage
+ */
+function calculateSavings(cacheReadTokens, cacheWriteTokens, inputTokens) {
+    const settings = getSettings();
+    const pricing = PRICING_MODELS[settings.pricingModel] || PRICING_MODELS['claude-sonnet-4.5'];
+
+    // Cost if all tokens were regular input
+    const regularCost = (cacheReadTokens / 1000000) * pricing.input;
+
+    // Actual cost with caching
+    const cachedCost = (cacheReadTokens / 1000000) * pricing.cacheRead;
+
+    // Savings = what we would have paid - what we actually paid
+    const savings = regularCost - cachedCost;
+
+    return Math.max(0, savings);
+}
+
+/**
+ * Processes cache usage data from API response
+ */
+function processCacheUsage(usage) {
+    if (!usage) return;
+
+    const settings = getSettings();
+    if (!settings.monitorEnabled) return;
+
+    const cacheReadTokens = usage.cache_read_input_tokens || 0;
+    const cacheWriteTokens = usage.cache_creation_input_tokens || 0;
+    const inputTokens = usage.input_tokens || 0;
+    const outputTokens = usage.output_tokens || 0;
+
+    debugLog('Cache usage:', { cacheReadTokens, cacheWriteTokens, inputTokens, outputTokens });
+
+    // Update stats
+    cacheStats.totalRequests++;
+    cacheStats.cacheReadTokens += cacheReadTokens;
+    cacheStats.cacheWriteTokens += cacheWriteTokens;
+    cacheStats.totalInputTokens += inputTokens;
+    cacheStats.totalOutputTokens += outputTokens;
+    cacheStats.lastCacheReadTokens = cacheReadTokens;
+    cacheStats.lastCacheWriteTokens = cacheWriteTokens;
+
+    // Determine if this was a cache hit (had cached tokens read)
+    if (cacheReadTokens > 0) {
+        cacheStats.cacheHits++;
+        cacheStats.lastRequestHit = true;
+    } else {
+        cacheStats.cacheMisses++;
+        cacheStats.lastRequestHit = false;
+    }
+
+    // Calculate savings
+    if (settings.trackCost) {
+        const savings = calculateSavings(cacheReadTokens, cacheWriteTokens, inputTokens);
+        cacheStats.estimatedSavings += savings;
+    }
+
+    // Update widget
+    updateWidgetContent();
+
+    debugLog('Updated cache stats:', cacheStats);
+}
+
+/**
+ * Intercepts fetch to monitor API responses for cache data
+ */
+function setupFetchInterceptor() {
+    if (originalFetch) return; // Already set up
+
+    originalFetch = window.fetch;
+
+    window.fetch = async function(...args) {
+        const response = await originalFetch.apply(this, args);
+
+        try {
+            const url = args[0]?.url || args[0];
+
+            // Check if this is a chat completions request
+            if (typeof url === 'string' && (
+                url.includes('/chat/completions') ||
+                url.includes('/v1/messages') ||
+                url.includes('api.anthropic.com') ||
+                url.includes('openrouter.ai')
+            )) {
+                // Clone the response so we can read it
+                const clonedResponse = response.clone();
+
+                // Handle streaming responses
+                if (clonedResponse.headers.get('content-type')?.includes('text/event-stream')) {
+                    handleStreamingResponse(clonedResponse);
+                } else {
+                    // Handle non-streaming responses
+                    handleNonStreamingResponse(clonedResponse);
+                }
+            }
+        } catch (error) {
+            debugLog('Error in fetch interceptor:', error);
+        }
+
+        return response;
+    };
+
+    debugLog('Fetch interceptor installed');
+}
+
+/**
+ * Handles streaming SSE responses
+ */
+async function handleStreamingResponse(response) {
+    try {
+        const reader = response.body?.getReader();
+        if (!reader) return;
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete SSE events
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6).trim();
+                    if (data === '[DONE]') continue;
+
+                    try {
+                        const parsed = JSON.parse(data);
+
+                        // Check for usage in different response formats
+                        if (parsed.usage) {
+                            processCacheUsage(parsed.usage);
+                        } else if (parsed.message?.usage) {
+                            processCacheUsage(parsed.message.usage);
+                        }
+
+                        // Claude API format - check for message_delta with usage
+                        if (parsed.type === 'message_delta' && parsed.usage) {
+                            processCacheUsage(parsed.usage);
+                        }
+
+                        // Check for message_start which may contain usage
+                        if (parsed.type === 'message_start' && parsed.message?.usage) {
+                            processCacheUsage(parsed.message.usage);
+                        }
+                    } catch (e) {
+                        // Not valid JSON, skip
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        debugLog('Error handling streaming response:', error);
+    }
+}
+
+/**
+ * Handles non-streaming JSON responses
+ */
+async function handleNonStreamingResponse(response) {
+    try {
+        const data = await response.json();
+
+        if (data.usage) {
+            processCacheUsage(data.usage);
+        } else if (data.message?.usage) {
+            processCacheUsage(data.message.usage);
+        }
+    } catch (error) {
+        debugLog('Error handling non-streaming response:', error);
+    }
+}
+
+/**
+ * Removes the fetch interceptor
+ */
+function removeFetchInterceptor() {
+    if (originalFetch) {
+        window.fetch = originalFetch;
+        originalFetch = null;
+        debugLog('Fetch interceptor removed');
+    }
+}
+
+/**
+ * Resets cache monitor statistics
+ */
+function resetCacheStats() {
+    cacheStats = {
+        totalRequests: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        estimatedSavings: 0,
+        lastRequestHit: null,
+        lastCacheReadTokens: 0,
+        lastCacheWriteTokens: 0
+    };
+
+    updateWidgetContent();
+    showNotification('Cache statistics reset', 'info');
+    log('Cache statistics reset');
+}
+
+// ============================================================================
+// Event Handlers
+// ============================================================================
+
 function onChatChanged(chatId) {
     debugLog('Chat changed event received');
 
@@ -439,30 +812,19 @@ function onChatChanged(chatId) {
 
     if (newChatId !== currentChatId) {
         log('Chat changed, resetting cache refresh state');
-        resetState();
+        resetRefresherState();
     }
 }
 
-/**
- * Handler for when generation ends
- * @param {Object} data - Generation event data
- */
 function onGenerationEnded(data) {
     debugLog('Generation ended event received', data);
     capturePromptData(data);
 }
 
-/**
- * Handler for when generation is stopped by user
- */
 function onGenerationStopped() {
     debugLog('Generation stopped by user');
-    // Don't capture data for stopped generations
 }
 
-/**
- * Registers event listeners with SillyTavern
- */
 function registerEventListeners() {
     if (eventListenersRegistered) {
         return;
@@ -475,22 +837,14 @@ function registerEventListeners() {
         return;
     }
 
-    // Listen for chat changes
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
-
-    // Listen for generation completion
     eventSource.on(event_types.GENERATION_ENDED, onGenerationEnded);
-
-    // Listen for generation stopped
     eventSource.on(event_types.GENERATION_STOPPED, onGenerationStopped);
 
     eventListenersRegistered = true;
     debugLog('Event listeners registered');
 }
 
-/**
- * Unregisters event listeners
- */
 function unregisterEventListeners() {
     if (!eventListenersRegistered) {
         return;
@@ -510,12 +864,11 @@ function unregisterEventListeners() {
     debugLog('Event listeners unregistered');
 }
 
-/**
- * Gets the extension's base path dynamically
- * @returns {string} The base path for extension resources
- */
+// ============================================================================
+// Settings UI
+// ============================================================================
+
 function getExtensionPath() {
-    // Try to find the script element that loaded this extension
     const scripts = document.querySelectorAll('script[src*="cache"]');
     for (const script of scripts) {
         const src = script.getAttribute('src');
@@ -524,23 +877,13 @@ function getExtensionPath() {
         }
     }
 
-    // Fallback to common extension paths
-    const possiblePaths = [
-        '/scripts/extensions/third-party/Cache-Refresh-SillyTavern-Update',
-        '/scripts/extensions/third-party/Cache-Refresh-SillyTavern'
-    ];
-
-    return possiblePaths[0];
+    return '/scripts/extensions/third-party/Cache-Refresh-SillyTavern-Update';
 }
 
-/**
- * Initializes the settings UI
- */
 async function initSettingsUI() {
     const settings = getSettings();
     const extensionPath = getExtensionPath();
 
-    // Load the HTML template
     const response = await fetch(`${extensionPath}/cache-refresher.html`);
     if (!response.ok) {
         logError('Failed to load settings template');
@@ -549,20 +892,18 @@ async function initSettingsUI() {
 
     const html = await response.text();
 
-    // Find the extensions settings container
     const extensionsBlock = document.getElementById('extensions_settings');
     if (!extensionsBlock) {
         logError('Extensions settings block not found');
         return;
     }
 
-    // Add our settings panel
     const settingsContainer = document.createElement('div');
     settingsContainer.id = 'cache_refresher_settings';
     settingsContainer.innerHTML = html;
     extensionsBlock.appendChild(settingsContainer);
 
-    // Initialize UI values from settings
+    // Cache Refresher settings
     const enabledCheckbox = document.getElementById('cache_refresh_enabled');
     const intervalInput = document.getElementById('cache_refresh_interval');
     const maxRefreshesInput = document.getElementById('cache_refresh_max');
@@ -571,22 +912,29 @@ async function initSettingsUI() {
     const debugCheckbox = document.getElementById('cache_refresh_debug');
     const stopButton = document.getElementById('cache_refresh_stop');
 
+    // Cache Monitor settings
+    const monitorEnabledCheckbox = document.getElementById('cache_monitor_enabled');
+    const widgetCheckbox = document.getElementById('cache_monitor_widget');
+    const costCheckbox = document.getElementById('cache_monitor_cost');
+    const positionSelect = document.getElementById('cache_monitor_position');
+    const pricingSelect = document.getElementById('cache_monitor_pricing');
+    const resetButton = document.getElementById('cache_monitor_reset');
+
+    // Initialize Cache Refresher UI
     if (enabledCheckbox) {
         enabledCheckbox.checked = settings.enabled;
         enabledCheckbox.addEventListener('change', (e) => {
             settings.enabled = e.target.checked;
             saveSettings();
-
             if (!settings.enabled) {
                 stopRefreshTimer();
             }
-
-            log(`Extension ${settings.enabled ? 'enabled' : 'disabled'}`);
+            log(`Cache Refresher ${settings.enabled ? 'enabled' : 'disabled'}`);
         });
     }
 
     if (intervalInput) {
-        intervalInput.value = settings.interval / 1000; // Convert to seconds
+        intervalInput.value = settings.interval / 1000;
         intervalInput.addEventListener('change', (e) => {
             const seconds = parseInt(e.target.value, 10);
             if (!isNaN(seconds) && seconds >= 30 && seconds <= 600) {
@@ -628,7 +976,6 @@ async function initSettingsUI() {
         statusCheckbox.addEventListener('change', (e) => {
             settings.showStatusIndicator = e.target.checked;
             saveSettings();
-
             if (!settings.showStatusIndicator) {
                 removeStatusIndicator();
             } else if (refreshTimer) {
@@ -653,24 +1000,84 @@ async function initSettingsUI() {
         });
     }
 
+    // Initialize Cache Monitor UI
+    if (monitorEnabledCheckbox) {
+        monitorEnabledCheckbox.checked = settings.monitorEnabled;
+        monitorEnabledCheckbox.addEventListener('change', (e) => {
+            settings.monitorEnabled = e.target.checked;
+            saveSettings();
+            updateWidgetVisibility();
+            if (settings.monitorEnabled) {
+                setupFetchInterceptor();
+            }
+            log(`Cache Monitor ${settings.monitorEnabled ? 'enabled' : 'disabled'}`);
+        });
+    }
+
+    if (widgetCheckbox) {
+        widgetCheckbox.checked = settings.showWidget;
+        widgetCheckbox.addEventListener('change', (e) => {
+            settings.showWidget = e.target.checked;
+            saveSettings();
+            updateWidgetVisibility();
+        });
+    }
+
+    if (costCheckbox) {
+        costCheckbox.checked = settings.trackCost;
+        costCheckbox.addEventListener('change', (e) => {
+            settings.trackCost = e.target.checked;
+            saveSettings();
+            updateWidgetContent();
+        });
+    }
+
+    if (positionSelect) {
+        positionSelect.value = settings.widgetPosition;
+        positionSelect.addEventListener('change', (e) => {
+            settings.widgetPosition = e.target.value;
+            saveSettings();
+            updateWidgetPosition();
+        });
+    }
+
+    if (pricingSelect) {
+        pricingSelect.value = settings.pricingModel;
+        pricingSelect.addEventListener('change', (e) => {
+            settings.pricingModel = e.target.value;
+            saveSettings();
+        });
+    }
+
+    if (resetButton) {
+        resetButton.addEventListener('click', resetCacheStats);
+    }
+
     log('Settings UI initialized');
 }
 
-/**
- * Main initialization function
- */
+// ============================================================================
+// Initialization
+// ============================================================================
+
 async function init() {
-    log('Initializing Cache Refresher extension v2.0.0 for SillyTavern 1.15.0+');
+    log('Initializing Cache Refresher & Monitor extension v2.1.0');
 
     try {
-        // Initialize settings
         getSettings();
 
-        // Initialize UI
         await initSettingsUI();
 
-        // Register event listeners
         registerEventListeners();
+
+        // Initialize Cache Monitor
+        const settings = getSettings();
+        if (settings.monitorEnabled) {
+            setupFetchInterceptor();
+        }
+
+        // Create the monitor widget
+        createMonitorWidget();
 
         log('Initialization complete');
 
@@ -679,38 +1086,36 @@ async function init() {
     }
 }
 
-/**
- * Cleanup function called when extension is disabled/unloaded
- */
 function cleanup() {
-    log('Cleaning up Cache Refresher extension');
+    log('Cleaning up Cache Refresher & Monitor extension');
 
     unregisterEventListeners();
-    resetState();
+    resetRefresherState();
+    removeFetchInterceptor();
 
-    // Remove settings UI
     const settingsContainer = document.getElementById('cache_refresher_settings');
     if (settingsContainer) {
         settingsContainer.remove();
     }
 
-    // Remove status indicator
     if (statusIndicator) {
         statusIndicator.remove();
         statusIndicator = null;
+    }
+
+    if (monitorWidget) {
+        monitorWidget.remove();
+        monitorWidget = null;
     }
 }
 
 // Export for SillyTavern's module system
 export { MODULE_NAME, init, cleanup };
 
-// Wait for SillyTavern to be ready, then initialize
+// Wait for SillyTavern to be ready
 jQuery(async () => {
-    // Check if SillyTavern context is available
     if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
         const { eventSource, event_types } = SillyTavern.getContext();
-
-        // Wait for app to be ready
         eventSource.on(event_types.APP_READY, init);
     } else {
         logError('SillyTavern context not available. Make sure you are running SillyTavern 1.15.0 or later.');
