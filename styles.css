@@ -692,3 +692,86 @@
 .cm-stat-value {
     transition: color 0.3s ease;
 }
+
+/* ============================================================================
+   Integrated Refresh Timer Section (in widget)
+   ============================================================================ */
+.cm-refresh-section {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--cm-bg-light);
+    border-radius: var(--cm-radius-sm);
+    border: 1px solid var(--cm-border);
+}
+
+.cm-refresh-section.active {
+    border-color: rgba(108, 138, 255, 0.4);
+    background: linear-gradient(135deg, rgba(60, 70, 110, 0.3) 0%, rgba(40, 50, 80, 0.3) 100%);
+}
+
+.cm-refresh-section.inactive {
+    opacity: 0.7;
+}
+
+.cm-refresh-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.cm-refresh-section .cm-refresh-icon {
+    font-size: 14px;
+    animation: none;
+}
+
+.cm-refresh-section.active .cm-refresh-icon {
+    animation: spin 2s linear infinite;
+}
+
+.cm-refresh-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--cm-text);
+    flex: 1;
+}
+
+.cm-refresh-section .cm-refresh-count {
+    font-size: 10px;
+    color: var(--cm-text-muted);
+    font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.cm-refresh-timer-display {
+    margin-top: 6px;
+}
+
+.cm-refresh-bar {
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+
+.cm-refresh-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--cm-accent), #8ba4ff);
+    border-radius: 2px;
+    transition: width 1s linear;
+}
+
+.cm-refresh-time {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cm-accent);
+    text-align: center;
+    font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.cm-refresh-status {
+    font-size: 10px;
+    color: var(--cm-text-muted);
+    text-align: center;
+    font-style: italic;
+}
