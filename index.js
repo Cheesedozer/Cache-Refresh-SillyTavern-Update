@@ -4,7 +4,7 @@
  * Cache Refresher: Keeps LLM cache warm with periodic minimal requests.
  * Cache Monitor: Tracks Claude API prompt caching performance in real-time.
  *
- * Version: 2.2.0
+ * Version: 2.2.1
  * Compatible with: SillyTavern 1.15.0+
  * Author: OneinfinityN7
  * Cache Monitor inspired by: zwheeler/SillyTavern-CacheMonitor
@@ -728,25 +728,33 @@ function setupFetchInterceptor() {
         try {
             const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
 
-            // Match SillyTavern API endpoints and external Claude/OpenRouter endpoints
+            // Match SillyTavern API endpoints - be very broad to catch all generation endpoints
             const isRelevantEndpoint = url && (
-                url.includes('/api/') ||
+                url.includes('/api/backends/') ||
+                url.includes('/api/chats/') ||
+                url.includes('/api/openai/') ||
+                url.includes('/api/anthropic/') ||
+                url.includes('generate') ||
+                url.includes('completions') ||
+                url.includes('messages') ||
                 url.includes('api.anthropic.com') ||
-                url.includes('openrouter.ai') ||
-                url.includes('/v1/chat/completions') ||
-                url.includes('/v1/messages')
+                url.includes('openrouter.ai')
             );
 
             if (isRelevantEndpoint) {
                 const cloned = response.clone();
                 const contentType = cloned.headers.get('content-type') || '';
 
-                debugLog('Intercepted request to:', url, 'Content-Type:', contentType);
+                log('Intercepted:', url.substring(0, 80), '| Type:', contentType.substring(0, 30));
 
                 if (contentType.includes('text/event-stream') || contentType.includes('text/plain')) {
-                    handleStreamingResponse(cloned);
+                    handleStreamingResponse(cloned, url);
                 } else if (contentType.includes('application/json')) {
-                    handleNonStreamingResponse(cloned);
+                    handleNonStreamingResponse(cloned, url);
+                } else {
+                    // Try to handle as text anyway - might be streaming without proper content-type
+                    debugLog('Unknown content type, attempting to read as text');
+                    handleStreamingResponse(cloned, url);
                 }
             }
         } catch (error) {
@@ -759,14 +767,18 @@ function setupFetchInterceptor() {
     log('Fetch interceptor installed');
 }
 
-async function handleStreamingResponse(response) {
+async function handleStreamingResponse(response, url) {
     try {
         const reader = response.body?.getReader();
-        if (!reader) return;
+        if (!reader) {
+            debugLog('No reader available for streaming response');
+            return;
+        }
 
         const decoder = new TextDecoder();
         let buffer = '';
         let usageData = null;
+        let allChunks = []; // For debug logging
 
         while (true) {
             const { done, value } = await reader.read();
@@ -781,35 +793,18 @@ async function handleStreamingResponse(response) {
                 let data = line;
                 if (line.startsWith('data: ')) {
                     data = line.slice(6).trim();
+                } else if (line.startsWith('event:')) {
+                    continue; // Skip event type lines
                 }
 
-                if (data === '[DONE]' || !data) continue;
+                if (data === '[DONE]' || !data || data.startsWith(':')) continue;
 
                 try {
                     const parsed = JSON.parse(data);
+                    allChunks.push(parsed);
 
                     // Look for usage in various response formats
-                    let usage = null;
-
-                    // Standard OpenAI format
-                    if (parsed.usage) {
-                        usage = parsed.usage;
-                    }
-                    // Anthropic message format
-                    else if (parsed.message?.usage) {
-                        usage = parsed.message.usage;
-                    }
-                    // Anthropic streaming events
-                    else if (parsed.type === 'message_delta' && parsed.usage) {
-                        usage = parsed.usage;
-                    }
-                    else if (parsed.type === 'message_start' && parsed.message?.usage) {
-                        usage = parsed.message.usage;
-                    }
-                    // OpenRouter format
-                    else if (parsed.x_oaicompat_usage) {
-                        usage = parsed.x_oaicompat_usage;
-                    }
+                    let usage = extractUsageFromObject(parsed);
 
                     // Accumulate usage data (some formats send partial data)
                     if (usage) {
@@ -817,53 +812,154 @@ async function handleStreamingResponse(response) {
                             usageData = {};
                         }
                         // Merge usage data, preferring non-zero values
-                        for (const [key, value] of Object.entries(usage)) {
-                            if (value !== undefined && value !== null && (value !== 0 || !usageData[key])) {
-                                usageData[key] = value;
+                        for (const [key, val] of Object.entries(usage)) {
+                            if (val !== undefined && val !== null && (val !== 0 || !usageData[key])) {
+                                usageData[key] = val;
                             }
                         }
-                        debugLog('Found usage data in stream:', usage);
+                        log('Found usage in stream chunk:', usage);
                     }
                 } catch (e) {
-                    // Not valid JSON, continue
+                    // Not valid JSON, might be partial line or plain text
+                    if (data.includes('cache') || data.includes('usage') || data.includes('tokens')) {
+                        debugLog('Potentially relevant non-JSON data:', data.substring(0, 200));
+                    }
                 }
             }
         }
 
+        // Log summary for debugging
+        if (allChunks.length > 0) {
+            debugLog(`Processed ${allChunks.length} chunks from stream. Last few:`, allChunks.slice(-3));
+        }
+
         // Process accumulated usage data at end of stream
         if (usageData && Object.keys(usageData).length > 0) {
+            log('Final accumulated usage from stream:', usageData);
             processCacheUsage(usageData);
+        } else {
+            debugLog('No usage data found in streaming response');
         }
     } catch (error) {
         debugLog('Streaming response error:', error);
     }
 }
 
-async function handleNonStreamingResponse(response) {
+function extractUsageFromObject(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+
+    // Direct usage object
+    if (obj.usage) {
+        return obj.usage;
+    }
+
+    // Anthropic message.usage
+    if (obj.message?.usage) {
+        return obj.message.usage;
+    }
+
+    // Anthropic streaming events
+    if (obj.type === 'message_start' && obj.message?.usage) {
+        return obj.message.usage;
+    }
+    if (obj.type === 'message_delta' && obj.usage) {
+        return obj.usage;
+    }
+    if (obj.type === 'message_stop') {
+        // Sometimes final usage is at message_stop
+        debugLog('message_stop event:', obj);
+    }
+
+    // OpenRouter format
+    if (obj.x_oaicompat_usage) {
+        return obj.x_oaicompat_usage;
+    }
+
+    // Check for cache tokens at root level (some formats)
+    if (obj.cache_read_input_tokens !== undefined || obj.cache_creation_input_tokens !== undefined) {
+        return {
+            cache_read_input_tokens: obj.cache_read_input_tokens,
+            cache_creation_input_tokens: obj.cache_creation_input_tokens,
+            input_tokens: obj.input_tokens,
+            output_tokens: obj.output_tokens
+        };
+    }
+
+    // SillyTavern might wrap response in specific format
+    if (obj.response?.usage) {
+        return obj.response.usage;
+    }
+    if (obj.data?.usage) {
+        return obj.data.usage;
+    }
+
+    return null;
+}
+
+async function handleNonStreamingResponse(response, url) {
     try {
         const text = await response.text();
+        debugLog('Non-streaming response length:', text.length);
 
         try {
             const data = JSON.parse(text);
 
-            // Look for usage in various places
-            let usage = data.usage || data.message?.usage;
+            // Log the full response structure for debugging
+            debugLog('Non-streaming response structure:', Object.keys(data));
 
-            // OpenRouter specific
-            if (!usage && data.x_oaicompat_usage) {
-                usage = data.x_oaicompat_usage;
+            // Use the comprehensive extraction function
+            let usage = extractUsageFromObject(data);
+
+            // Also recursively search the object for usage data
+            if (!usage) {
+                usage = deepFindUsage(data);
             }
 
             if (usage) {
-                debugLog('Found usage in non-streaming response:', usage);
+                log('Found usage in non-streaming response:', usage);
                 processCacheUsage(usage);
+            } else {
+                debugLog('No usage found in non-streaming response. Keys:', Object.keys(data).join(', '));
+                // Log a sample of the response for debugging
+                if (getSettings().debug) {
+                    console.log('[CacheRefresher] Full response sample:', JSON.stringify(data).substring(0, 500));
+                }
             }
         } catch (e) {
-            debugLog('Could not parse response as JSON');
+            debugLog('Could not parse response as JSON:', e.message);
         }
     } catch (error) {
         debugLog('Non-streaming response error:', error);
     }
+}
+
+function deepFindUsage(obj, depth = 0) {
+    if (depth > 5 || !obj || typeof obj !== 'object') return null;
+
+    // Check if this object has cache token fields
+    if (obj.cache_read_input_tokens !== undefined ||
+        obj.cache_creation_input_tokens !== undefined ||
+        (obj.input_tokens !== undefined && obj.output_tokens !== undefined)) {
+        return obj;
+    }
+
+    // Check for usage property
+    if (obj.usage && typeof obj.usage === 'object') {
+        return obj.usage;
+    }
+
+    // Recursively search
+    for (const key of Object.keys(obj)) {
+        if (key === 'usage' || key.toLowerCase().includes('token') || key.toLowerCase().includes('cache')) {
+            const val = obj[key];
+            if (typeof val === 'object' && val !== null) {
+                const found = deepFindUsage(val, depth + 1);
+                if (found) return found;
+            }
+        }
+    }
+
+    return null;
 }
 
 function removeFetchInterceptor() {
@@ -902,8 +998,73 @@ function onChatChanged() {
     }
 }
 
-function onGenerationEnded() {
+function tryGetUsageFromContext() {
+    try {
+        const ctx = SillyTavern.getContext();
+
+        // Check if SillyTavern stores last API response somewhere
+        const lastResponse = ctx.lastApiResponse || ctx.apiResponse;
+        if (lastResponse?.usage) {
+            log('Found usage in SillyTavern context lastApiResponse:', lastResponse.usage);
+            processCacheUsage(lastResponse.usage);
+            return;
+        }
+
+        // Check chat_metadata for recent usage
+        if (ctx.chat_metadata?.lastUsage) {
+            log('Found usage in chat_metadata:', ctx.chat_metadata.lastUsage);
+            processCacheUsage(ctx.chat_metadata.lastUsage);
+            return;
+        }
+
+        // Check the last message in chat for token info
+        const chat = ctx.chat;
+        if (chat?.length > 0) {
+            const lastMsg = chat[chat.length - 1];
+            if (lastMsg?.extra?.api) {
+                const apiData = lastMsg.extra.api;
+                if (apiData.cache_read_input_tokens !== undefined || apiData.usage) {
+                    log('Found usage in last message extra.api:', apiData);
+                    processCacheUsage(apiData.usage || apiData);
+                    return;
+                }
+            }
+            // Check token counts stored in message
+            if (lastMsg?.extra?.token_count !== undefined) {
+                debugLog('Found token_count in last message:', lastMsg.extra.token_count);
+            }
+        }
+
+        debugLog('No usage data found in SillyTavern context');
+    } catch (error) {
+        debugLog('Error getting usage from context:', error);
+    }
+}
+
+function onGenerationEnded(data) {
+    debugLog('GENERATION_ENDED event data:', data);
     capturePromptData();
+
+    // Try to extract usage from event data (SillyTavern may pass it here)
+    if (data) {
+        // Check various possible locations for usage data
+        const usage = data.usage || data.extra?.usage || data.meta?.usage;
+        if (usage) {
+            log('Found usage in GENERATION_ENDED event:', usage);
+            processCacheUsage(usage);
+            return;
+        }
+
+        // Check for cache tokens directly
+        if (data.cache_read_input_tokens !== undefined || data.cache_creation_input_tokens !== undefined) {
+            log('Found cache tokens in GENERATION_ENDED event:', data);
+            processCacheUsage(data);
+            return;
+        }
+    }
+
+    // Try to get usage from SillyTavern's context
+    tryGetUsageFromContext();
 }
 
 function registerEventListeners() {
@@ -1054,7 +1215,7 @@ function bindSelect(id, setting, callback) {
 // ============================================================================
 
 async function init() {
-    log('Initializing Cache Refresher & Monitor v2.2.0');
+    log('Initializing Cache Refresher & Monitor v2.2.1');
 
     try {
         getSettings();
