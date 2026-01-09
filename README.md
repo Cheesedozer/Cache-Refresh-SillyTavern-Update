@@ -1,28 +1,25 @@
-# Cache Refresher & Monitor for SillyTavern
+# Cache Refresher for SillyTavern
 
-A comprehensive extension for SillyTavern that helps you maximize Claude API prompt caching efficiency and save money.
+A lightweight extension for SillyTavern that keeps your Claude API prompt cache warm, preventing expensive cache misses when you pause between messages.
 
 ## Features
 
 ### 🔄 Cache Refresher
-Automatically keeps your LLM cache "warm" by sending periodic minimal requests, preventing expensive cache misses when you pause between messages.
-
-- **Automatic Cache Refresh**: Sends periodic "ping" requests to keep cache alive
+- **Automatic Cache Refresh**: Sends periodic minimal "ping" requests to keep cache alive
 - **Configurable Intervals**: Set refresh timing from 30 to 600 seconds
-- **Refresh Limits**: Control maximum refreshes per message
-- **Visual Countdown**: Floating timer shows next refresh
+- **Refresh Limits**: Control maximum refreshes per message to manage costs
+- **Floating Timer**: Clean, minimal countdown widget that can be dragged anywhere
 - **Smart Detection**: Automatically stops when chat changes
 
-### 📊 Cache Monitor
-Real-time monitoring of your Claude API prompt caching performance with detailed statistics.
+## Why Use This?
 
-> *Cache Monitor feature inspired by [zwheeler/SillyTavern-CacheMonitor](https://github.com/zwheeler/SillyTavern-CacheMonitor)*
+Claude's prompt cache has a **5-minute TTL** (Time To Live). If you pause between messages longer than 5 minutes, the cache expires and you pay full price for tokens that were previously cached.
 
-- **Hit Rate Tracking**: See how often your prompts hit the cache
-- **Token Statistics**: Track cached vs uncached tokens
-- **Cost Savings Calculator**: Estimate how much money caching saves
-- **Model Presets**: Pre-configured pricing for Claude 4.5 models
-- **Floating Widget**: Minimizable real-time statistics display
+**Example savings:**
+- 50,000 token conversation with Claude Sonnet
+- Without refresh: Cache expires, ~$7.50 for 50 messages
+- With refresh: Cache stays warm, ~$1.73 for 50 messages
+- **Savings: ~77%**
 
 ## Requirements
 
@@ -62,10 +59,10 @@ For caching to work, configure these settings in your `config.yaml`:
 claude:
   # Enable system prompt caching (use only with static prompts)
   enableSystemPromptCache: true
-  
+
   # Cache at message depth (2 = previous exchange, recommended)
   cachingAtDepth: 2
-  
+
   # Extended TTL (optional, costs more but lasts 1 hour)
   extendedTTL: false
 ```
@@ -74,9 +71,7 @@ claude:
 
 ### Extension Settings
 
-Access settings via **Extensions** → **Cache Refresher & Monitor**
-
-#### Cache Refresher Settings
+Access settings via **Extensions** → **Cache Refresher**
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -84,51 +79,17 @@ Access settings via **Extensions** → **Cache Refresher & Monitor**
 | Refresh Interval | 240s | Time between refresh requests |
 | Maximum Refreshes | 5 | Limit per message |
 | Show Notifications | On | Toast notifications on refresh |
-| Show Countdown Timer | On | Floating timer display |
-
-#### Cache Monitor Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Enable Cache Monitor | On | Toggle cache monitoring |
-| Show Floating Widget | On | Display stats widget |
-| Track Cost Savings | On | Calculate estimated savings |
-| Widget Position | Bottom Left | Where to show the widget |
-| Pricing Model | Sonnet 4.5 | Model for cost calculations |
+| Show Floating Timer | On | Draggable countdown widget |
 
 ## Recommended Settings by Model
 
 ### Claude Sonnet 4.5 / Opus 4.5
 - **Refresh Interval**: 240 seconds (4 minutes)
 - **Max Refreshes**: 5-10
-- **Caching TTL**: 5 minutes (default) or 1 hour
 
 ### Claude Haiku 4.5
 - **Refresh Interval**: 240 seconds
 - **Max Refreshes**: 10-15 (lower cost per refresh)
-
-## Understanding Cache Statistics
-
-### Hit Rate
-- **Excellent (70%+)**: Caching is working great! 🟢
-- **Moderate (40-70%)**: Some cache misses, review your setup 🟡
-- **Poor (<40%)**: Most prompts miss cache, troubleshoot needed 🔴
-
-### What Causes Cache Misses?
-- Cache expired (>5 minutes idle without refresh)
-- System prompt changed (random macros, lorebooks)
-- Message history truncated by context limit
-- Different model or endpoint used
-
-## Cost Savings Example
-
-**Scenario**: 50,000 token conversation with Claude Sonnet 4.5
-
-| Without Caching | With Caching (80% hit rate) |
-|-----------------|------------------------------|
-| $0.15 per message | $0.0345 per message |
-| 50 messages = $7.50 | 50 messages = $1.73 |
-| | **Savings: $5.77 (77%)** |
 
 ## Troubleshooting
 
@@ -143,40 +104,31 @@ Access settings via **Extensions** → **Cache Refresher & Monitor**
 - Avoid `{{random}}` macros in system prompts
 - Verify model supports caching (Claude 3.5+, 4.x)
 
-### Monitor Shows No Data
-- Enable Cache Monitor in settings
-- Generate some messages to collect data
-- Check debug mode for detailed logs
-
-### High Cache Miss Rate
-- Reduce system prompt variability
-- Check if context is being truncated
-- Ensure cachingAtDepth is set properly
-- Verify refresh timer is running
+### Timer Not Appearing
+- Check "Show Floating Timer" is enabled in settings
+- Try clicking "Reset Position" button
+- Refresh the page
 
 ## Version History
 
-### v2.1.0 (Latest)
-- Added Cache Monitor feature
-- Real-time cache hit/miss tracking
-- Cost savings calculator
-- Model pricing presets
-- Minimizable floating widget
-- Credit: Cache Monitor inspired by zwheeler/SillyTavern-CacheMonitor
+### v3.0.0 (Latest)
+- **Major Update**: Removed Cache Monitor feature (was not functioning properly with SillyTavern's API architecture)
+- New clean, minimal floating timer design
+- Timer widget is now draggable to any position
+- Added "Reset Position" button
+- Simplified codebase for reliability
+- Improved error handling
 
-### v2.0.0
-- Migrated to SillyTavern 1.15.0 stable APIs
-- Updated event handling system
-- Improved group chat support
-- Enhanced error handling
+### v2.x
+- Added Cache Monitor feature (removed in v3.0.0)
+- Integrated timer into monitor widget
 
 ### v1.x
 - Initial release for older SillyTavern versions
 
 ## Credits
 
-- **OneinfinityN7** - Cache Refresher development
-- **zwheeler** - Cache Monitor concept ([SillyTavern-CacheMonitor](https://github.com/zwheeler/SillyTavern-CacheMonitor))
+- **OneinfinityN7** - Original Cache Refresher development
 - **SillyTavern Team** - Platform and extension system
 
 ## License
@@ -191,4 +143,4 @@ AGPL-3.0 License - See [LICENSE](LICENSE) file
 
 ---
 
-*Making Claude caching actually work for everyone* 💰
+*Keep your cache warm, save money* 💰

@@ -1,23 +1,5 @@
-/* Cache Refresher & Monitor Extension Styles */
-/* Version 2.1.0 - Modern, Polished UI */
-
-/* ============================================================================
-   CSS Variables for Theming
-   ============================================================================ */
-:root {
-    --cm-bg: rgba(15, 15, 25, 0.95);
-    --cm-bg-light: rgba(30, 30, 45, 0.9);
-    --cm-border: rgba(100, 100, 140, 0.3);
-    --cm-text: #e0e0e5;
-    --cm-text-muted: rgba(200, 200, 210, 0.7);
-    --cm-accent: #6c8aff;
-    --cm-good: #4ade80;
-    --cm-warning: #fbbf24;
-    --cm-bad: #f87171;
-    --cm-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    --cm-radius: 12px;
-    --cm-radius-sm: 8px;
-}
+/* Cache Refresher Extension Styles */
+/* Version 3.0.0 - Clean, Minimal Design */
 
 /* ============================================================================
    Settings Panel Styles
@@ -118,33 +100,75 @@
     color: var(--SmartThemeQuoteColor);
 }
 
-/* ============================================================================
-   Cache Refresh Timer Indicator
-   ============================================================================ */
-.cache-refresh-indicator {
-    position: fixed;
-    bottom: 80px;
-    right: 20px;
-    background: var(--cm-bg);
-    border: 1px solid var(--cm-border);
-    border-radius: var(--cm-radius-sm);
-    padding: 10px 14px;
-    z-index: 9999;
-    display: none;
-    align-items: center;
-    box-shadow: var(--cm-shadow);
-    backdrop-filter: blur(12px);
-    font-family: var(--mainFontFamily);
+.cache-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
-.cache-refresh-indicator-content {
+.cache-buttons .menu_button {
+    flex: 1;
+    min-width: 120px;
+}
+
+/* ============================================================================
+   Floating Timer Widget - Clean Minimal Design
+   ============================================================================ */
+#cache-refresh-timer {
+    position: fixed;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    background: rgba(20, 20, 28, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px 14px;
+    min-width: 140px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(12px);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    cursor: grab;
+    user-select: none;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+#cache-refresh-timer:hover {
+    background: rgba(25, 25, 35, 0.95);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+#cache-refresh-timer:active {
+    cursor: grabbing;
+}
+
+/* Active state - timer running */
+#cache-refresh-timer.active {
+    border-color: rgba(100, 180, 255, 0.3);
+}
+
+/* Idle state */
+#cache-refresh-timer.idle {
+    opacity: 0.7;
+}
+
+#cache-refresh-timer.idle:hover {
+    opacity: 1;
+}
+
+/* Content layout */
+.crt-content {
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
-.cache-refresh-icon {
-    font-size: 16px;
+/* Icon */
+.crt-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+#cache-refresh-timer.active .crt-icon {
     animation: spin 2s linear infinite;
 }
 
@@ -153,625 +177,64 @@
     to { transform: rotate(360deg); }
 }
 
-.cache-refresh-timer {
-    font-size: 15px;
+/* Info section */
+.crt-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* Time display */
+.crt-time {
+    font-size: 18px;
     font-weight: 600;
-    font-family: 'SF Mono', 'Consolas', monospace;
-    color: var(--cm-text);
-    min-width: 45px;
-}
-
-.cache-refresh-count {
-    font-size: 11px;
-    color: var(--cm-text-muted);
-}
-
-/* ============================================================================
-   Cache Monitor Widget - Modern Floating Panel
-   ============================================================================ */
-#cache-monitor-widget {
-    position: fixed;
-    background: var(--cm-bg);
-    border: 1px solid var(--cm-border);
-    border-radius: var(--cm-radius);
-    z-index: 9998;
-    box-shadow: var(--cm-shadow);
-    backdrop-filter: blur(16px);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    min-width: 240px;
-    max-width: 300px;
-    overflow: hidden;
-    transition: box-shadow 0.2s ease;
-}
-
-#cache-monitor-widget:hover {
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-}
-
-/* Header */
-.cm-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
-    background: linear-gradient(135deg, rgba(60, 60, 90, 0.4) 0%, rgba(40, 40, 60, 0.4) 100%);
-    cursor: grab;
-    user-select: none;
-    border-bottom: 1px solid var(--cm-border);
-}
-
-.cm-header:active {
-    cursor: grabbing;
-}
-
-.cm-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--cm-text);
-}
-
-.cm-icon {
-    font-size: 14px;
-}
-
-.cm-mini-rate {
-    font-size: 12px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.1);
-}
-
-.cm-mini-rate.good { color: var(--cm-good); background: rgba(74, 222, 128, 0.15); }
-.cm-mini-rate.warning { color: var(--cm-warning); background: rgba(251, 191, 36, 0.15); }
-.cm-mini-rate.poor { color: var(--cm-bad); background: rgba(248, 113, 113, 0.15); }
-
-.cm-controls {
-    display: flex;
-    gap: 4px;
-}
-
-.cm-toggle {
-    background: none;
-    border: none;
-    color: var(--cm-text-muted);
-    cursor: pointer;
-    padding: 4px 8px;
-    font-size: 10px;
-    border-radius: 4px;
-    transition: all 0.2s;
-}
-
-.cm-toggle:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--cm-text);
-}
-
-/* Body */
-.cm-body {
-    padding: 14px;
-}
-
-/* Last Request Status */
-.cm-last-request {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
-    background: var(--cm-bg-light);
-    border-radius: var(--cm-radius-sm);
-    margin-bottom: 12px;
-    border-left: 3px solid var(--cm-border);
-}
-
-.cm-last-request.hit {
-    border-left-color: var(--cm-good);
-    background: rgba(74, 222, 128, 0.08);
-}
-
-.cm-last-request.miss {
-    border-left-color: var(--cm-bad);
-    background: rgba(248, 113, 113, 0.08);
-}
-
-.cm-last-label {
-    font-size: 10px;
-    text-transform: uppercase;
+    color: #fff;
+    font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
     letter-spacing: 0.5px;
-    color: var(--cm-text-muted);
 }
 
-.cm-last-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+#cache-refresh-timer.idle .crt-time {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
 }
 
-.cm-status-badge {
-    font-size: 11px;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 4px;
-    text-transform: uppercase;
+/* Status text */
+.crt-status {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.5);
     letter-spacing: 0.3px;
 }
 
-.cm-status-badge.hit {
-    background: rgba(74, 222, 128, 0.2);
-    color: var(--cm-good);
-}
-
-.cm-status-badge.miss {
-    background: rgba(248, 113, 113, 0.2);
-    color: var(--cm-bad);
-}
-
-.cm-status-badge.none {
+/* Progress bar */
+.crt-progress {
+    margin-top: 8px;
+    height: 3px;
     background: rgba(255, 255, 255, 0.1);
-    color: var(--cm-text-muted);
-}
-
-.cm-last-tokens {
-    font-size: 11px;
-    color: var(--cm-text-muted);
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-/* Warning Banner */
-.cm-warning {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    background: rgba(251, 191, 36, 0.12);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-    border-radius: var(--cm-radius-sm);
-    margin-bottom: 12px;
-    font-size: 11px;
-    color: var(--cm-warning);
-}
-
-.cm-warning-icon {
-    font-size: 14px;
-}
-
-/* TTL Timer */
-.cm-ttl {
-    margin-bottom: 14px;
-}
-
-.cm-ttl-bar {
-    height: 6px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
 }
 
-.cm-ttl-fill {
+.crt-progress-fill {
     height: 100%;
-    border-radius: 3px;
-    transition: width 1s linear, background-color 0.3s;
-}
-
-.cm-ttl-fill.good { background: linear-gradient(90deg, var(--cm-good), #22c55e); }
-.cm-ttl-fill.warning { background: linear-gradient(90deg, var(--cm-warning), #f59e0b); }
-.cm-ttl-fill.critical { background: linear-gradient(90deg, var(--cm-bad), #dc2626); }
-.cm-ttl-fill.expired { background: rgba(100, 100, 100, 0.5); }
-
-.cm-ttl-text {
-    font-size: 10px;
-    color: var(--cm-text-muted);
-    text-align: center;
-    margin-top: 4px;
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-/* Stats Grid */
-.cm-stats-grid {
-    margin-bottom: 12px;
-}
-
-.cm-stat.main {
-    text-align: center;
-    padding: 16px;
-    background: linear-gradient(135deg, rgba(60, 60, 90, 0.3) 0%, rgba(40, 40, 70, 0.3) 100%);
-    border-radius: var(--cm-radius-sm);
-    border: 1px solid var(--cm-border);
-}
-
-.cm-stat.main .cm-stat-value {
-    font-size: 32px;
-    font-weight: 700;
-    line-height: 1;
-    margin-bottom: 4px;
-}
-
-.cm-stat.main .cm-stat-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--cm-text-muted);
-    margin-bottom: 4px;
-}
-
-.cm-stat.main .cm-stat-sub {
-    font-size: 11px;
-    color: var(--cm-text-muted);
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-/* Stats Row */
-.cm-stats-row {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 12px;
-}
-
-.cm-stats-row .cm-stat {
-    flex: 1;
-    text-align: center;
-    padding: 12px 8px;
-    background: var(--cm-bg-light);
-    border-radius: var(--cm-radius-sm);
-    border: 1px solid var(--cm-border);
-}
-
-.cm-stats-row .cm-stat-value {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--cm-text);
-    font-family: 'SF Mono', 'Consolas', monospace;
-    margin-bottom: 2px;
-}
-
-.cm-stats-row .cm-stat-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--cm-text-muted);
-}
-
-/* Color Classes */
-.good { color: var(--cm-good) !important; }
-.warning { color: var(--cm-warning) !important; }
-.poor { color: var(--cm-bad) !important; }
-
-/* Savings Display */
-.cm-savings {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px;
-    background: rgba(74, 222, 128, 0.08);
-    border: 1px solid rgba(74, 222, 128, 0.2);
-    border-radius: var(--cm-radius-sm);
-    margin-bottom: 12px;
-}
-
-.cm-savings-label {
-    font-size: 11px;
-    color: var(--cm-text-muted);
-}
-
-.cm-savings-value {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--cm-good);
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-/* Action Buttons */
-.cm-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.cm-btn {
-    flex: 1;
-    padding: 8px 12px;
-    font-size: 11px;
-    font-weight: 500;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid var(--cm-border);
-    border-radius: 6px;
-    color: var(--cm-text);
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.cm-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.2);
-}
-
-.cm-btn:active {
-    transform: scale(0.98);
-}
-
-/* ============================================================================
-   History Modal
-   ============================================================================ */
-.cm-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: fadeIn 0.2s ease;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-.cm-modal-backdrop {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(4px);
-}
-
-.cm-modal-content {
-    position: relative;
-    background: var(--cm-bg);
-    border: 1px solid var(--cm-border);
-    border-radius: var(--cm-radius);
-    max-width: 90vw;
-    max-height: 80vh;
-    min-width: 700px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    box-shadow: var(--cm-shadow);
-    animation: slideUp 0.3s ease;
-}
-
-@keyframes slideUp {
-    from { transform: translateY(20px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-}
-
-.cm-modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--cm-border);
-    background: linear-gradient(135deg, rgba(60, 60, 90, 0.4) 0%, rgba(40, 40, 60, 0.4) 100%);
-}
-
-.cm-modal-header h3 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--cm-text);
-}
-
-.cm-modal-close {
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    color: var(--cm-text-muted);
-    padding: 0;
-    line-height: 1;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    transition: all 0.2s;
-}
-
-.cm-modal-close:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--cm-text);
-}
-
-.cm-modal-body {
-    overflow-y: auto;
-    flex: 1;
-    max-height: 50vh;
-}
-
-/* History Table */
-.cm-history-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-
-.cm-history-table th,
-.cm-history-table td {
-    padding: 12px 14px;
-    text-align: left;
-    border-bottom: 1px solid var(--cm-border);
-    color: var(--cm-text);
-}
-
-.cm-history-table th {
-    background: rgba(0, 0, 0, 0.3);
-    font-weight: 600;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--cm-text-muted);
-    position: sticky;
-    top: 0;
-}
-
-.cm-history-table tr:hover {
-    background: rgba(255, 255, 255, 0.03);
-}
-
-.cm-history-table tr.hit-row {
-    background: rgba(74, 222, 128, 0.03);
-}
-
-.cm-history-table tr.miss-row {
-    background: rgba(248, 113, 113, 0.03);
-}
-
-.cm-history-table td {
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-/* Modal Footer */
-.cm-modal-footer {
-    padding: 14px 20px;
-    border-top: 1px solid var(--cm-border);
-    background: rgba(0, 0, 0, 0.2);
-}
-
-.cm-modal-stats {
-    display: flex;
-    gap: 24px;
-    font-size: 12px;
-    color: var(--cm-text-muted);
-}
-
-.cm-modal-stats strong {
-    color: var(--cm-text);
-    margin-right: 4px;
+    background: linear-gradient(90deg, #64b4ff, #a0d0ff);
+    border-radius: 2px;
+    transition: width 1s linear;
 }
 
 /* ============================================================================
    Responsive Adjustments
    ============================================================================ */
 @media (max-width: 768px) {
-    #cache-monitor-widget {
-        min-width: 200px;
-        max-width: 260px;
+    #cache-refresh-timer {
+        min-width: 120px;
+        padding: 8px 12px;
     }
 
-    .cm-stat.main .cm-stat-value {
-        font-size: 26px;
+    .crt-time {
+        font-size: 16px;
     }
 
-    .cm-modal-content {
-        min-width: auto;
-        width: 95vw;
+    .crt-icon {
+        font-size: 16px;
     }
-
-    .cm-history-table th,
-    .cm-history-table td {
-        padding: 8px 10px;
-        font-size: 11px;
-    }
-}
-
-/* ============================================================================
-   Animation Effects
-   ============================================================================ */
-@keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.02); }
-}
-
-.cm-stat.highlight {
-    animation: pulse 0.3s ease;
-}
-
-/* Smooth transitions for stats updates */
-.cm-stat-value {
-    transition: color 0.3s ease;
-}
-
-/* ============================================================================
-   Integrated Refresh Timer Section (in widget)
-   ============================================================================ */
-.cm-refresh-section {
-    margin-top: 12px;
-    padding: 12px;
-    background: var(--cm-bg-light);
-    border-radius: var(--cm-radius-sm);
-    border: 1px solid var(--cm-border);
-}
-
-.cm-refresh-section.active {
-    border-color: rgba(108, 138, 255, 0.4);
-    background: linear-gradient(135deg, rgba(60, 70, 110, 0.3) 0%, rgba(40, 50, 80, 0.3) 100%);
-}
-
-.cm-refresh-section.inactive {
-    opacity: 0.7;
-}
-
-.cm-refresh-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-}
-
-.cm-refresh-section .cm-refresh-icon {
-    font-size: 14px;
-    animation: none;
-}
-
-.cm-refresh-section.active .cm-refresh-icon {
-    animation: spin 2s linear infinite;
-}
-
-.cm-refresh-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--cm-text);
-    flex: 1;
-}
-
-.cm-refresh-section .cm-refresh-count {
-    font-size: 10px;
-    color: var(--cm-text-muted);
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-.cm-refresh-timer-display {
-    margin-top: 6px;
-}
-
-.cm-refresh-bar {
-    height: 4px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-bottom: 4px;
-}
-
-.cm-refresh-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--cm-accent), #8ba4ff);
-    border-radius: 2px;
-    transition: width 1s linear;
-}
-
-.cm-refresh-time {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--cm-accent);
-    text-align: center;
-    font-family: 'SF Mono', 'Consolas', monospace;
-}
-
-.cm-refresh-status {
-    font-size: 10px;
-    color: var(--cm-text-muted);
-    text-align: center;
-    font-style: italic;
 }
